@@ -634,6 +634,120 @@ test('react: dibuja réplicas, estados y el robot', async page => {
   }
 });
 
+/* ---------- widgets del dashboard ---------- */
+
+// Arma en la página una "slide de prueba" con los cuatro widgets sobre una ShopSim y la deja correr `ff` s.
+// fn(ctx) corre en la página con ctx = { sim, root, logs, trace, ... }.
+function widgetPage(body, ff = 20) {
+  return `(async () => {
+    const root = document.createElement('div');
+    root.id = 'wtest'; root.className = 'panel';
+    root.style.cssText = 'box-sizing:border-box;position:absolute;left:0;top:0;z-index:99;width:' + (document.documentElement.classList.contains('mobile') ? '100%' : '560px') + ';padding:8px;background:#0a0f1f';
+    root.innerHTML = '<svg class="sim" style="display:none"></svg>' +
+      '<div class="sstats" data-service="pagos" data-fields="n,rps,errPct,avg,p50,p95,p99,sat" data-window="10"></div>' +
+      '<div class="chart-box"><canvas class="svc-chart"></canvas></div>' +
+      '<div class="logs"></div><div class="trace"></div>';
+    document.body.appendChild(root);
+    const sim = new ShopSimKit.ShopSim(root.querySelector('svg'), {});
+    const logs = root.querySelector('.logs'), trace = root.querySelector('.trace');
+    const stats = root.querySelector('.sstats');
+    Widgets.svcStats(stats, sim);
+    const chart = Widgets.svcChart(root.querySelector('canvas'), sim, { service: 'pagos' });
+    const logW = Widgets.logStream(logs, sim);
+    const traceW = Widgets.traceView(trace, sim);
+    sim.fastForward(${ff});
+    return (${body})({ sim, root, logs, trace, stats, chart, logW, traceW });
+  })()`;
+}
+
+test('widget: estadísticas y gráfico siguen la simulación', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    const cells = [...c.stats.querySelectorAll('.sstat b')].map(b => b.textContent);
+    c.sim.breakPagos('slowdb');
+    c.sim.fastForward(30);
+    return { n: cells.length, vals: cells, sat: c.stats.querySelector('[data-f="sat"]').textContent,
+      pts: c.chart.data.datasets.map(d => d.data.filter(x => x !== null).length), cls: c.root.querySelector('canvas').className };
+  }`));
+  check(r.n === 8, `campos: ${r.n}`);
+  check(r.vals.every(v => v !== '' ), `vacíos: ${r.vals}`);
+  check(parseInt(r.sat) >= 95, `sat tras slowdb: ${r.sat}`);
+  check(r.pts.every(n => n > 10), `puntos del gráfico: ${r.pts}`);
+  check(r.cls === 'svc-chart', `clase del canvas: ${r.cls}`);
+});
+
+test('widget: logs filtra por nivel y pedido', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.sim.breakPagos('slowdb');
+    c.sim.fastForward(30);
+    c.logW.render();
+    const all = [...c.logs.querySelectorAll('.log-line')];
+    c.logs.querySelector('[data-level="error"]').click();
+    const err = [...c.logs.querySelectorAll('.log-line')].map(l => l.className);
+    const first = c.sim.logs.filter(l => l.level === 'error').slice(-1)[0].orderId;
+    const input = c.logs.querySelector('input.log-search');
+    input.value = String(first); input.dispatchEvent(new Event('input'));
+    const byOrder = [...c.logs.querySelectorAll('.log-line')].map(l => l.textContent);
+    return { all: all.length, err, first, byOrder };
+  }`));
+  check(r.all > 0 && r.all <= 40, `líneas: ${r.all}`);
+  check(r.err.length > 0 && r.err.every(c => c.includes('lv-error')), `no todas error: ${r.err}`);
+  check(r.byOrder.length > 0 && r.byOrder.every(t => t.includes(`#${r.first}`)), `no todas con #${r.first}: ${r.byOrder.slice(0, 3)}`);
+});
+
+test('widget: logs en json', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.logs.dataset.format = 'json';
+    c.logW.render();
+    return [...c.logs.querySelectorAll('.log-line')].map(l => l.textContent);
+  }`));
+  check(r.length > 0, 'sin líneas');
+  const objs = r.map(l => JSON.parse(l));
+  check(objs.every(o => /^[0-9a-f]{8}$/.test(o.traceId) && o.level && o.service && o.msg && o.orderId), 'faltan campos');
+});
+
+test('widget: cascada resalta pagos', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.sim.breakPagos('slowdb');
+    c.sim.fastForward(25);
+    const ok = c.sim.traces.filter(t => t.ok).slice(-1)[0];
+    c.traceW.select(ok.traceId);
+    const rows = [...c.trace.querySelectorAll('.t-row')].map(r => r.dataset.service);
+    const hl = [...c.trace.querySelectorAll('.t-row.longest')].map(r => r.dataset.service);
+    const colors = [...c.trace.querySelectorAll('.t-bar')].map(b => b.style.background);
+    return { rows, hl, colors, head: c.trace.querySelector('.tr-head').textContent, id: ok.orderId };
+  }`, 10));
+  check(r.rows.join() === 'ordenes,pagos,envios', `spans: ${r.rows}`);
+  check(r.hl.join() === 'pagos', `resaltado: ${r.hl}`);
+  check(new Set(r.colors).size === 3, `colores: ${r.colors}`);
+  check(r.head.includes(`#${r.id}`) && /\d/.test(r.head), `header: ${r.head}`);
+});
+
+test('widget: legibles en celular', async page => {
+  await page.setViewport({ width: 400, height: 800, isMobile: true, hasTouch: true });
+  await open(page, 0, true);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.logs.dataset.format = 'text'; c.logW.render();
+    const out = {};
+    for (const [k, el] of [['logs', c.logs], ['trace', c.trace], ['stats', c.stats]]) out[k] = el.scrollWidth <= el.clientWidth + 1;
+    out.page = c.root.scrollWidth <= c.root.clientWidth + 1 && c.root.getBoundingClientRect().right <= document.documentElement.clientWidth + 1;
+    out.lines = c.logs.querySelectorAll('.log-line').length;
+    out.hits = [...c.logs.querySelectorAll('button, input')].map(b => {
+      const r = b.getBoundingClientRect();
+      const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return t === b || b.contains(t);
+    });
+    return out;
+  }`));
+  check(r.logs && r.trace && r.stats, `scroll horizontal: ${JSON.stringify(r)}`);
+  check(r.page, 'el contenedor de los widgets desborda');
+  check(r.lines > 0, 'sin líneas');
+  check(r.hits.length >= 5 && r.hits.every(Boolean), `controles sin toque: ${r.hits}`);
+});
+
 /* ---------- runner ---------- */
 
 (async () => {

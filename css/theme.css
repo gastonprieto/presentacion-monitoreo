@@ -290,6 +290,49 @@ html, body { background: var(--bg); }
 
 .keys-mobile { display: none; }
 
+/* ---------- widgets del dashboard: métricas (violeta), logs (gris) y trazas (naranja) ---------- */
+.sstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 6px; }
+.sstat { background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--purple); border-radius: 10px; padding: 6px 8px; min-width: 0; }
+.sstat b { display: block; font: 700 19px var(--mono); color: #fff; white-space: nowrap; }
+.sstat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.sstat.s-errPct b { color: var(--red); }
+.sstat.s-sat b { color: var(--yellow); }
+.sstats-title { font-size: 12px; color: var(--purple); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+canvas.svc-chart { display: block; width: 100%; }
+
+.logs { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.log-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.log-btn { background: transparent; border: 1px solid var(--line); border-radius: 8px; color: #cbd5e1; font: 600 12px var(--mono); padding: 4px 9px; cursor: pointer; }
+.log-btn.active { background: #cbd5e1; color: #0a0f1f; border-color: #cbd5e1; }
+.log-btn.lv-warn.active { background: #facc15; border-color: #facc15; }
+.log-btn.lv-error.active { background: #f87171; border-color: #f87171; }
+.log-search { flex: 1 1 120px; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: #e2e8f0; font: 12px var(--mono); padding: 5px 8px; }
+.log-lines { height: 230px; overflow-y: auto; overflow-x: hidden; font: 11.5px/1.45 var(--mono); }
+.log-line { white-space: pre-wrap; overflow-wrap: anywhere; color: #cbd5e1; }
+.log-line.lv-warn { color: #facc15; }
+.log-line.lv-error { color: #f87171; }
+.log-line .l-t, .log-line .l-ord, .log-line .l-trace { color: var(--dim); }
+.log-empty { color: var(--dim); font: 12px var(--mono); padding: 6px 0; }
+
+.trace { background: var(--panel-2); border: 1px solid var(--orange); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.tr-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 14px; color: #cbd5e1; }
+.tr-head b { color: var(--orange); font-size: 16px; }
+.tr-dur { font: 700 15px var(--mono); color: #fff; }
+.tr-id { font: 12px var(--mono); color: var(--dim); }
+.tr-st { font: 700 11px var(--mono); border-radius: 6px; padding: 1px 7px; }
+.tr-st.ok { background: rgba(74,222,128,.15); color: var(--green); }
+.tr-st.err { background: rgba(248,113,113,.15); color: var(--red); }
+.t-row { display: grid; grid-template-columns: 62px 1fr 62px; gap: 8px; align-items: center; font: 12px var(--mono); color: #cbd5e1; }
+.t-ms { text-align: right; white-space: nowrap; }
+.t-track { position: relative; height: 18px; background: rgba(148,163,184,.08); border-radius: 4px; }
+.t-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; min-width: 3px; }
+.t-bar.fail { box-shadow: inset 0 0 0 2px var(--red); }
+.t-row.longest .t-bar { top: 0; bottom: 0; outline: 2px solid var(--orange); outline-offset: 1px; }
+.t-row.longest .t-ms, .t-row.longest .t-name { color: var(--orange); font-weight: 700; }
+.tr-note { font-size: 13px; color: var(--muted); }
+.tr-note b { color: var(--orange); }
+.tr-empty { color: var(--dim); font-size: 14px; }
+
 /* ---------- celular (html.mobile): documento vertical con scroll nativo, sin reveal.js ---------- */
 
 html.mobile, html.mobile body { height: auto; overflow: visible; }
@@ -331,6 +374,10 @@ html.mobile .panel .spacer { display: none; }
 html.mobile .chart-box { height: 190px !important; }
 html.mobile .seg { flex-wrap: wrap; }
 html.mobile .btn { padding: 10px 14px; }
+html.mobile .log-line .l-trace { display: none; }
+html.mobile .log-btn { padding: 8px 12px; }
+html.mobile .log-lines { height: 200px; }
+html.mobile .t-row { grid-template-columns: 54px 1fr 56px; gap: 6px; }
 html.mobile .netsim .banner text { font-size: 14px; }
 
 html.mobile .title-slide { min-height: 82vh; display: flex !important; flex-direction: column; justify-content: center; }
