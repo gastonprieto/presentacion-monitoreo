@@ -189,6 +189,62 @@ test('obs: breaker abre, prueba y cierra', async page => {
   check(r.closed === 'closed', JSON.stringify(r));
 });
 
+test('obs: breaker tick pasa a half sin esperar a allow', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const b = new window.ObsKit.CircuitBreaker({ failures: 2, openFor: 5 });
+    b.record(0, false); b.record(1, false);
+    const o = { open: b.state };
+    b.tick(4); o.still = b.state;
+    b.tick(6); o.half = b.state;
+    return o;
+  });
+  check(r.open === 'open' && r.still === 'open' && r.half === 'half', JSON.stringify(r));
+});
+
+test('obs: breaker half → open si la prueba falla', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const b = new window.ObsKit.CircuitBreaker({ failures: 1, openFor: 5 });
+    b.record(0, false);
+    const o = { probe: b.allow(5) };
+    b.record(6, false);
+    o.state = b.state; o.after = b.allow(7); o.again = b.allow(11);
+    return o;
+  });
+  check(r.probe === true && r.state === 'open' && r.after === false && r.again === true, JSON.stringify(r));
+});
+
+test('obs: breaker re-arma la prueba que nunca volvió', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const b = new window.ObsKit.CircuitBreaker({ failures: 1, openFor: 5 });
+    b.record(0, false);
+    const o = { probe: b.allow(5), mid: b.allow(8), rearm: b.allow(10.5), state: b.state };
+    return o;
+  });
+  check(r.probe && !r.mid && r.rearm && r.state === 'half', JSON.stringify(r));
+});
+
+test('obs: supervisor always reinicia aunque salga bien', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const a = new window.ObsKit.Supervisor({ policy: 'always' });
+    const f = new window.ObsKit.Supervisor({ policy: 'on-failure' });
+    return { a: a.onExit(0, false), f: f.onExit(0, false), fs: f.state };
+  });
+  check(r.a === 1 && r.f === null && r.fs === 'stopped', JSON.stringify(r));
+});
+
+test('obs: autoscaler baja sólo si lo pidió todo el downWindow', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const a = new window.ObsKit.Autoscaler({ target: 0.7, cooldown: 0, downWindow: 10 });
+    return [a.step(0, 1.4, 1), a.step(1, 0.3, 2), a.step(5, 0.3, 2), a.step(11.5, 0.3, 2), a.step(12, 1.4, 1)];
+  });
+  check(JSON.stringify(r) === '[2,2,2,1,2]', `pasos: ${r}`);
+});
+
 /* ---------- ShopSim: la tienda ---------- */
 
 // Crea una ShopSim sobre el svg suelto (código que corre en la página)

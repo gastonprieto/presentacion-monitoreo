@@ -161,19 +161,26 @@
   }
 
   // Escala réplicas según la métrica por réplica: desired = ceil(replicas × metric / target), entre min y max.
-  // Entre dos cambios pasa al menos cooldown. startup lo usa ShopSim para la demora de la réplica nueva.
+  // Entre dos cambios pasa al menos cooldown. Para bajar, todas las recomendaciones de los últimos downWindow
+  // segundos tienen que pedir menos (se usa la más alta): un bache de carga no achica y vuelve a agrandar.
+  // startup lo usa ShopSim para la demora de la réplica nueva.
   class Autoscaler {
-    constructor({ min = 1, max = 6, target, cooldown = 8, startup = 3 }) {
+    constructor({ min = 1, max = 6, target, cooldown = 8, startup = 3, downWindow = 0 }) {
       this.min = min;
       this.max = max;
       this.target = target;
       this.cooldown = cooldown;
       this.startup = startup;
+      this.downWindow = downWindow;
       this.lastChange = -Infinity;
+      this.recs = []; // [t, recomendación]
     }
     step(t, metricPerReplica, replicas) {
       const raw = Math.ceil(replicas * metricPerReplica / this.target - 1e-9);
-      const desired = Math.max(this.min, Math.min(this.max, raw));
+      let desired = Math.max(this.min, Math.min(this.max, raw));
+      this.recs.push([t, desired]);
+      while (this.recs.length && this.recs[0][0] < t - this.downWindow) this.recs.shift();
+      if (desired < replicas) desired = Math.min(replicas, Math.max(...this.recs.map(r => r[1])));
       if (desired === replicas || t - this.lastChange < this.cooldown) return replicas;
       this.lastChange = t;
       return desired;
@@ -181,7 +188,9 @@
   }
 
   // Corta las llamadas a un destino que falla: closed → open (tras `failures` seguidas) → half (tras openFor,
-  // deja pasar una prueba) → closed si la prueba sale bien, open si falla.
+  // deja pasar una prueba) → closed si la prueba sale bien, open si falla. Si la prueba nunca vuelve (nadie
+  // llama a record), a los openFor se habilita otra. tick(t) aplica el paso del tiempo sin pedir permiso,
+  // para que el estado dibujado no quede viejo.
   class CircuitBreaker {
     constructor({ failures = 5, openFor = 5 } = {}) {
       this.failures = failures;
@@ -190,15 +199,21 @@
       this.fails = 0;
       this.openedAt = 0;
       this.probing = false;
+      this.probeAt = 0;
     }
     get state() { return this._state; }
-    allow(t) {
+    tick(t) {
       if (this._state === 'open' && t - this.openedAt >= this.openFor) {
         this._state = 'half';
         this.probing = false;
       }
+      if (this._state === 'half' && this.probing && t - this.probeAt >= this.openFor) this.probing = false;
+      return this._state;
+    }
+    allow(t) {
+      this.tick(t);
       if (this._state === 'closed') return true;
-      if (this._state === 'half' && !this.probing) { this.probing = true; return true; }
+      if (this._state === 'half' && !this.probing) { this.probing = true; this.probeAt = t; return true; }
       return false;
     }
     record(t, ok) {
@@ -207,7 +222,7 @@
         if (this._state === 'half') this._state = 'closed';
         return;
       }
-      if (this._state === 'half') { this._state = 'open'; this.openedAt = t; return; }
+      if (this._state === 'half') { this._state = 'open'; this.openedAt = t; this.probing = false; return; }
       if (this._state === 'closed' && ++this.fails >= this.failures) { this._state = 'open'; this.openedAt = t; }
     }
   }
