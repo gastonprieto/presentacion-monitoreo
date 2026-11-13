@@ -69,6 +69,68 @@ test('outro: link al repo y preset', async page => {
   check(r.links.some(h => h.includes('architecture-playground')), 'el outro no linkea al playground');
 });
 
+/* ---------- ObsKit: métricas y alertas ---------- */
+
+test('obs: percentiles', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const a = Array.from({ length: 100 }, (_, i) => i + 1);
+    const { percentile } = window.ObsKit;
+    return [percentile(a, 50), percentile(a, 95), percentile(a, 99), percentile([], 95)];
+  });
+  check(r[0] === 50 && r[1] === 95 && r[2] === 99, `percentiles: ${r}`);
+  check(r[3] === 0, `vacío: ${r[3]}`);
+});
+
+test('obs: ventana descarta lo viejo', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const w = new window.ObsKit.MetricWindow({ span: 5 });
+    w.add(1, { latency: 10, ok: true });
+    w.add(8, { latency: 1, ok: true });
+    return w.stats(9);
+  });
+  check(r.n === 1 && r.avg === 1, `stats: ${JSON.stringify(r)}`);
+});
+
+test('obs: el promedio esconde la cola', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const w = new window.ObsKit.MetricWindow({ span: 2000 });
+    for (let i = 0; i < 1000; i++) w.add(i * 0.001, { latency: i % 20 === 0 ? 2 : 0.1, ok: true });
+    return w.stats(1);
+  });
+  check(r.avg < 0.25, `avg ${r.avg}`);
+  check(r.p99 >= 2, `p99 ${r.p99}`);
+});
+
+test('obs: alerta con ventana', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const a = new window.ObsKit.AlertRule({ threshold: 5, forSec: 3 });
+    return a.evaluate([0, 9, 0, 9, 9, 9, 9, 0].map((v, t) => [t, v]));
+  });
+  check(r.firings.length === 1 && r.firings[0][0] === 6, `firings: ${JSON.stringify(r.firings)}`);
+});
+
+test('obs: clasificar alertas', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => window.ObsKit.classifyAlerts([[2, 3], [10, 12]], [[10, 15], [20, 25]]));
+  check(r.caught === 1 && r.missed === 1 && r.falsePos === 1, JSON.stringify(r));
+});
+
+test('obs: presupuesto de error', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const b = new window.ObsKit.ErrorBudget({ slo: 0.99, windowSec: 100 });
+    for (let i = 0; i < 1000; i++) b.add(i * 0.01, i % 50 !== 0);
+    return b.state(10);
+  });
+  check(r.total === 1000 && r.bad === 20, JSON.stringify(r));
+  check(Math.abs(r.allowed - 10) < 1e-6 && Math.abs(r.burnRate - 2) < 1e-6, JSON.stringify(r));
+  check(r.remainingPct <= 0 && r.remainingPct >= -100, `remaining ${r.remainingPct}`);
+});
+
 /* ---------- runner ---------- */
 
 (async () => {
