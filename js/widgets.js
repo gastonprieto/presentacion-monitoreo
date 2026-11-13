@@ -319,8 +319,8 @@
     input.addEventListener('input', render);
     new MutationObserver(render).observe(el, { attributes: true, attributeFilter: ['data-format'] });
     sim.on('log', () => { dirty = true; });
-    sim.on('reset', render);
     let last = -Infinity;
+    sim.on('reset', () => { last = -Infinity; dirty = true; render(); });
     sim.on('tick', now => { if (dirty && now - last >= 0.2) { last = now; render(); } });
     render();
     return { render };

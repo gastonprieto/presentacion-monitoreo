@@ -748,6 +748,20 @@ test('widget: legibles en celular', async page => {
   check(r.hits.length >= 5 && r.hits.every(Boolean), `controles sin toque: ${r.hits}`);
 });
 
+test('widget: logs siguen después de un reset', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.sim.fastForward(30);
+    c.sim.reset();
+    const vacio = c.logs.querySelectorAll('.log-line').length;
+    c.sim.fastForward(3);
+    const lines = [...c.logs.querySelectorAll('.log-line')].map(l => l.textContent);
+    return { vacio, lines, t: c.sim.t };
+  }`));
+  check(r.vacio === 0, `tras reset quedan ${r.vacio} líneas`);
+  check(r.lines.length > 0, `no aparecen líneas nuevas tras el reset (t=${r.t})`);
+});
+
 /* ---------- runner ---------- */
 
 (async () => {
