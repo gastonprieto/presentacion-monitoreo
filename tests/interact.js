@@ -441,15 +441,197 @@ test('shop: dibuja el pool en escritorio y celular', async page => {
     const s = (${SHOP})(svg, { showPool: true, replicas: 2 });
     s.fastForward(5);
     return { vb: svg.getAttribute('viewBox'), slots: svg.querySelectorAll('.slot').length,
-      on: svg.querySelectorAll('.slot.on').length, nodes: svg.querySelectorAll('.node-box').length };
+      on: svg.querySelectorAll('.slot.on').length, nodes: svg.querySelectorAll('.node-box').length, pool: s.o.pool };
   }`;
   await open(page, 0);
   const d = await engine(page, run);
   await open(page, 0, true);
   const m = await engine(page, run);
   check(d.vb === '0 0 900 590' && m.vb === '0 0 400 440', `${d.vb} / ${m.vb}`);
-  check(d.slots === 12 && m.slots === 12, `casilleros ${d.slots} / ${m.slots}`);
+  check(d.slots === 2 * d.pool && m.slots === 2 * d.pool, `casilleros ${d.slots} / ${m.slots} (pool ${d.pool})`);
   check(d.nodes === 6, `nodos ${d.nodes}`);
+});
+
+/* ---------- ShopSim: reacciones automáticas ---------- */
+
+// Crea la tienda y junta sus eventos 'react'
+const SHOPR = `(svg, opts) => { const s = new ShopSimKit.ShopSim(svg, opts); s.ev = []; s.on('react', e => s.ev.push(e)); return s; }`;
+
+test('react: liveness reinicia lo colgado', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const run = live => {
+      const s = (${SHOPR})(svg, { liveness: live, restartPolicy: 'always' });
+      s.fastForward(10);
+      s.breakPagos('hang');
+      const t0 = s.now;
+      s.fastForward(15);
+      const re = s.ev.find(e => e.kind === 'restart');
+      return { dt: re ? re.t - t0 : null, err: s.window(5).errPct, kinds: s.ev.map(e => e.kind), st: s.replicaState(0) };
+    };
+    return { on: run(true), off: run(false) };
+  }`);
+  check(r.on.dt !== null && r.on.dt < 1 * 2 + 2 + 1, `restart: ${JSON.stringify(r.on)}`);
+  check(r.on.kinds.includes('remove'), `sin remove: ${r.on.kinds}`);
+  check(r.on.err < 5 && r.on.st.up && r.on.st.restarts === 1, JSON.stringify(r.on));
+  check(r.off.err > 50 && r.off.dt === null, JSON.stringify(r.off));
+});
+
+test('react: readiness no manda tráfico al que arranca', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const run = ready => {
+      const s = (${SHOPR})(svg, { replicas: 2, readiness: ready, warmup: 5 });
+      s.fastForward(10);
+      s.restartReplica(1);
+      const got = s.replicaState(1).received;
+      s.fastForward(5);
+      const mid = { got: s.replicaState(1).received - got, err: s.window(5).errPct, ready: s.replicaState(1).ready };
+      s.fastForward(10);
+      return { mid, end: s.replicaState(1), err: s.window(6).errPct };
+    };
+    return { on: run(true), off: run(false) };
+  }`);
+  check(r.on.mid.got === 0 && r.on.mid.err === 0 && !r.on.mid.ready, JSON.stringify(r.on));
+  check(r.on.end.ready && r.on.end.up && r.on.err === 0, JSON.stringify(r.on));
+  check(r.off.mid.got > 0 && r.off.mid.err > 0, `sin readiness: ${JSON.stringify(r.off)}`);
+});
+
+test('react: crash loop', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { restartPolicy: 'on-failure' });
+    s.fastForward(5);
+    s.breakPagos('crash');
+    const t0 = s.now;
+    s.fastForward(30);
+    const re = s.ev.filter(e => e.kind === 'restart');
+    return { t0, rt: s.o.restartTime, times: re.map(e => e.t), delays: re.map(e => e.detail.delay), st: s.replicaState(0),
+      pagos: s.window(10, 'pagos') };
+  }`);
+  const waits = r.times.map((t, i) => i ? t - r.times[i - 1] - r.rt : t - r.t0);
+  [1, 2, 4, 8].forEach((d, i) => check(Math.abs(waits[i] - d) <= 0.1 && r.delays[i] === d, `esperas ${waits} · delays ${r.delays}`));
+  check(r.st.restarts >= 4 && !r.st.up, JSON.stringify(r.st));
+  check(r.pagos.errPct === 100 && r.pagos.n > 0, `pagos caído se ve sano: ${JSON.stringify(r.pagos)}`);
+});
+
+test('react: autoscaling con pico sano', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { autoscale: { target: 0.7, min: 1, max: 6, cooldown: 8, startup: 3 } });
+    s.fastForward(5);
+    s.set('rate', 20);
+    s.fastForward(35);
+    const ids = []; for (let i = 0; i < s.replicaCount; i++) ids.push(s.replicaState(i).id);
+    return { n: s.replicaCount, w: s.window(10), ids, scales: s.ev.filter(e => e.kind === 'scale').map(e => [Math.round(e.t), e.detail.to]) };
+  }`);
+  check(r.n >= 3, `réplicas ${r.n} · ${JSON.stringify(r.scales)}`);
+  check(r.w.errPct < 2, `errPct ${r.w.errPct}`);
+  check(new Set(r.ids).size === r.ids.length, `ids repetidos ${r.ids}`);
+});
+
+test('react: escalar empeora el incidente del pool', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const run = n => {
+      const s = (${SHOPR})(svg, { replicas: n, fault: 'slowdb' });
+      s.fastForward(60);
+      return { db: s.window(40, 'db').p95, err: s.window(40).errPct };
+    };
+    return { one: run(1), three: run(3) };
+  }`);
+  check(r.three.db > 2 * r.one.db, `p95 DB ${r.one.db} → ${r.three.db}`);
+  check(r.three.err >= r.one.err - 2, `errPct ${r.one.err} → ${r.three.err}`);
+});
+
+test('react: breaker falla rápido', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const run = opts => {
+      const s = (${SHOPR})(svg, opts);
+      s.fastForward(5);
+      s.breakPagos('hang');
+      s.fastForward(40);
+      return { p95: s.window(25, 'ordenes').p95, states: s.ev.filter(e => e.kind === 'breaker').map(e => e.detail.to) };
+    };
+    return { none: run({}), tmo: run({ timeout: 2 }), brk: run({ timeout: 2, breaker: { failures: 5, openFor: 5 } }) };
+  }`);
+  check(r.brk.p95 < r.tmo.p95 && r.tmo.p95 < r.none.p95, `p95 ${r.brk.p95} < ${r.tmo.p95} < ${r.none.p95}`);
+  check(r.brk.states.includes('open') && r.brk.states.includes('half'), `estados ${r.brk.states}`);
+});
+
+test('react: reintentos multiplican la carga', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { fault: 'slowdb', retries: 2 });
+    s.fastForward(50);
+    return { p: s.window(30, 'pagos').rps, c: s.window(30).rps };
+  }`);
+  check(r.p >= 2 * r.c, `pagos ${r.p} rps vs checkout ${r.c} rps`);
+});
+
+test('react: reset corta backoff y enfriamiento', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    // crash loop en backoff
+    const a = (${SHOPR})(svg, { restartPolicy: 'on-failure', replicas: 1 });
+    a.fastForward(3); a.breakPagos('crash'); a.fastForward(9);
+    const aBefore = a.ev.length;
+    a.reset(); a.fastForward(30);
+    // autoscaler a mitad de camino (réplica arrancando y enfriamiento en curso); antes del reset baja la carga
+    const b = (${SHOPR})(svg, { autoscale: { target: 0.7, min: 1, max: 6, cooldown: 8, startup: 3 } });
+    b.set('rate', 20); b.fastForward(12);
+    const bBefore = b.ev.length, bN = b.replicaCount;
+    b.set('rate', 3); b.reset(); b.fastForward(30);
+    return { aBefore, aAfter: a.ev.length - aBefore, aN: a.replicaCount, aUp: a.replicaState(0).up,
+      bBefore, bN, bAfter: b.ev.length - bBefore, bCount: b.replicaCount };
+  }`);
+  check(r.aBefore > 0 && r.aAfter === 0 && r.aN === 1 && r.aUp, JSON.stringify(r));
+  check(r.bBefore > 0 && r.bN > 1 && r.bAfter === 0 && r.bCount === 1, JSON.stringify(r));
+});
+
+test('react: las reacciones no dependen de la velocidad', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const { Speed } = NetKit, sp = Speed.value;
+    const opts = { liveness: true, readiness: true, warmup: 1, restartPolicy: 'always', timeout: 1.5, retries: 1,
+      breaker: { failures: 4, openFor: 3 }, autoscale: { target: 0.7, min: 1, max: 4, cooldown: 5, startup: 2 } };
+    const script = s => { s.after(3, () => s.set('rate', 18)); s.after(12, () => s.breakPagos('hang')); s.after(22, () => s.heal()); };
+    const sig = s => JSON.stringify({ ev: s.ev.map(e => [e.t.toFixed(6), e.kind, e.detail]), c: s.window(30), o: s.window(30, 'ordenes'), n: s.replicaCount });
+    try {
+      Speed.value = 0.25;
+      const a = (${SHOPR})(svg, opts); script(a); a.fastForward(35);
+      Speed.value = 1.5;
+      const b = (${SHOPR})(svg, opts); script(b);
+      while (b.now < 35 - 1e-6) b.clock._tick(0, 50);
+      return { a: sig(a), b: sig(b), kinds: [...new Set(a.ev.map(e => e.kind))] };
+    } finally { Speed.value = sp; }
+  }`);
+  check(r.a === r.b, `fastForward ≠ tiempo real\n${r.a.slice(0, 300)}\n${r.b.slice(0, 300)}`);
+  check(['scale', 'remove', 'restart', 'breaker'].every(k => r.kinds.includes(k)), `reacciones: ${r.kinds}`);
+});
+
+test('react: dibuja réplicas, estados y el robot', async page => {
+  const run = `(svg) => {
+    const s = new ShopSimKit.ShopSim(svg, { replicas: 6, showPool: true, readiness: true, liveness: true, restartPolicy: 'always', breaker: { failures: 3, openFor: 5 }, timeout: 2 });
+    s.fastForward(5);
+    s.restartReplica(2);
+    s.breakPagos('hang');
+    s.fastForward(2.5);
+    const mo = new MutationObserver(() => {});
+    mo.observe(svg, { childList: true, subtree: true });
+    let t = 0; while (t < 4) { s.clock._tick(0, 50); t += 0.05 * NetKit.Speed.value; }
+    const pops = mo.takeRecords().flatMap(x => [...x.addedNodes]).filter(n => n.classList && n.classList.contains('pop')).map(n => n.textContent);
+    mo.disconnect();
+    return { n: svg.querySelectorAll('.pagos').length, pops, brk: !!svg.querySelector('.breaker') };
+  }`;
+  for (const mobile of [false, true]) {
+    await open(page, 0, mobile);
+    const r = await engine(page, run);
+    check(r.n === 6, `réplicas dibujadas ${r.n}`);
+    check(r.pops.some(p => p.includes('🤖')), `sin 🤖: ${r.pops}`);
+    check(r.brk, 'no se dibuja el breaker');
+  }
 });
 
 /* ---------- runner ---------- */
