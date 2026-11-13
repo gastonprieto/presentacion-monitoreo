@@ -9,6 +9,11 @@
    exacto, sin importar el tamaño del tick ni la velocidad, así que tiempo real y `fastForward` dan los
    mismos números con la misma seed. El viaje entre servicios (`travel`) es un retardo fijo que se anima
    pero no cuenta como latencia: métricas y trazas miden tiempo de servicio (GUIDELINE §6).
+   Los scripts de las escenas y los modelos que reaccionan (supervisor, health checks, autoscaler, breaker)
+   programan con sim.after / sim.every / sim.wait, que van a la misma cola de eventos: corren en su instante
+   exacto y se borran con reset. wait() resuelve en su instante, pero el código después del await corre cuando
+   JS vuelve a la cola de microtareas (fin del tick o del fastForward): para algo exacto, after. No usar clock.after/every/wait para tocar la simulación (si alguien lo hace,
+   igual se pone al día la simulación hasta el instante del timer antes de correrlo).
    Usa el Clock y la geometría de NetKit y rng/MetricWindow de ObsKit. Expone window.ShopSimKit = { ShopSim, DEFAULTS, COL }. */
 (function () {
   'use strict';
@@ -77,6 +82,9 @@
       this.v = MOBILE;
       this.clock = new Clock();
       this.clock.onTick = () => this._frame();
+      // Un timer del Clock primero pone al día la simulación hasta su instante (los ticks corren timers antes que onTick)
+      const after = this.clock.after.bind(this.clock);
+      this.clock.after = (sec, fn) => { const tm = after(sec, () => { this._pump(tm.at); fn(); }); return tm; };
       this.listeners = {};
       this.drawing = true;
       this.o = Object.assign({}, DEFAULTS);
@@ -88,6 +96,16 @@
     start() { this.clock.start(); }
     stop() { this.clock.stop(); }
     get now() { return this.t; }
+
+    // Programación determinista sobre la cola de eventos (se borra con reset)
+    after(sec, fn) { return this._at(sec, fn); }
+    every(sec, fn) {
+      const h = { on: true, cancel() { h.on = false; } };
+      const loop = () => { if (!h.on) return; fn(); if (h.on) this._at(sec, loop); };
+      this._at(sec, loop);
+      return h;
+    }
+    wait(sec) { const gen = this.gen; return new Promise(r => this._at(sec, () => gen === this.gen && r())); }
 
     reset(opts) {
       if (opts) this.o = Object.assign({}, DEFAULTS, opts);
@@ -148,9 +166,9 @@
 
     // Métricas de los últimos sec segundos. service: 'checkout' (de punta a punta) o un servicio.
     window(sec, service = 'checkout') {
-      const from = this.t - sec, mw = new MetricWindow({ span: sec });
+      const now = this.t, from = now - sec, mw = new MetricWindow({ span: sec });
       for (const s of this.samples[service]) if (s.t > from) mw.add(s.t, s);
-      const st = mw.stats(this.t);
+      const st = mw.stats(now);
       let sat = 0;
       if (service === 'pagos') {
         let sum = 0, n = 0;
@@ -162,8 +180,9 @@
 
     /* ---------- eventos ---------- */
 
-    _at(dt, fn) {
-      const e = { at: this.t + dt, seq: this.seq++, fn, dead: false };
+    _at(dt, fn) { return this._atAbs(this.t + dt, fn); }
+    _atAbs(at, fn) {
+      const e = { at, seq: this.seq++, fn, dead: false };
       this.q.push(e);
       return e;
     }
@@ -191,6 +210,7 @@
 
     // Saturación del pool: conexiones en uso / total, medida en una grilla fija de tiempo
     _scheduleSat() {
+      let k = 0;
       const step = () => {
         const total = this.o.pool * this.reps.length;
         this.satLog.push([this.t, total ? this.reps.reduce((a, r) => a + r.inUse, 0) / total : 0]);
@@ -199,9 +219,9 @@
           this.satLog = this.satLog.filter(s => s[0] > from);
           for (const k of SERVICES) this.samples[k] = this.samples[k].filter(s => s.t > from);
         }
-        this._at(SAT_EVERY, step);
+        this._atAbs(Math.round(++k * SAT_EVERY * 1e6) / 1e6, step); // grilla exacta k × 0,1 s
       };
-      this._at(SAT_EVERY, step);
+      this._atAbs(++k * SAT_EVERY, step);
     }
 
     _resize() {
@@ -442,7 +462,8 @@
     }
 
     _frame() {
-      this._pump(this.clock.now);
+      // al µs: con ticks distintos el reloj acumula distinto error de coma flotante (29,9999999… vs 30)
+      this._pump(Math.round(this.clock.now * 1e6) / 1e6);
       if (this.drawing) this._draw();
       this.emit('tick', this.t);
     }

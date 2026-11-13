@@ -314,6 +314,57 @@ test('shop: la velocidad no cambia los números', async page => {
   check(JSON.stringify(r.a) === JSON.stringify(r.c), `tiempo real (${r.cNow}): ${JSON.stringify(r.c)}`);
 });
 
+test('shop: intervención programada es determinista', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const { Speed } = NetKit, sp = Speed.value;
+    const script = s => {
+      s.after(10, () => s.breakPagos('slowdb'));
+      s.after(25, () => s.heal());
+      let n = 0; s.every(1, () => n++);
+      return () => n;
+    };
+    try {
+      Speed.value = 0.25;
+      const a = (${SHOP})(svg); const na = script(a); a.fastForward(30);
+      Speed.value = 1.5;
+      const c = (${SHOP})(svg); const nc = script(c);
+      while (c.now < 30 - 1e-6) c.clock._tick(0, 100);
+      const d = (${SHOP})(svg); script(d); d.fastForward(5); d.reset(); d.fastForward(30);
+      // un timer del Clock (no recomendado) igual ve la simulación al día en su instante
+      const e = (${SHOP})(svg); let seen = null;
+      e.clock.after(0.37, () => { seen = e.now; });
+      e.clock._tick(0, 100); e.clock._tick(0, 100); e.clock._tick(0, 100); e.clock._tick(0, 100);
+      return { seen, a: a.window(10, 'pagos'), c: c.window(10, 'pagos'), na: na(), nc: nc(), dFault: d.fault, dN: d.window(30, 'pagos').errPct };
+    } finally { Speed.value = sp; }
+  }`);
+  check(r.a.errPct > 0, `la falla no se notó: ${JSON.stringify(r.a)}`);
+  check(JSON.stringify(r.a) === JSON.stringify(r.c), `${JSON.stringify(r.a)} vs ${JSON.stringify(r.c)}`);
+  check(r.na === r.nc && r.na >= 29 && r.na <= 30, `every: ${r.na} / ${r.nc}`);
+  check(Math.abs(r.seen - 0.37) < 1e-9, `timer del Clock vio now=${r.seen}`);
+  check(r.dFault === null && r.dN === 0, `reset no limpió los timers: ${r.dFault} ${r.dN}`);
+});
+
+test('shop: wait resuelve y reset la corta', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(async () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    document.body.appendChild(svg);
+    const s = new ShopSimKit.ShopSim(svg);
+    let a = false, b = false;
+    s.wait(2).then(() => { a = true; });
+    s.fastForward(3);
+    await Promise.resolve();
+    s.wait(2).then(() => { b = true; });
+    s.reset();
+    s.fastForward(3);
+    await Promise.resolve();
+    svg.remove();
+    return { a, b };
+  });
+  check(r.a && !r.b, JSON.stringify(r));
+});
+
 test('shop: reset limpia todo', async page => {
   await open(page, 0);
   const r = await engine(page, `(svg) => {
