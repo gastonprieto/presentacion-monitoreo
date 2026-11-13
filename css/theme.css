@@ -223,6 +223,17 @@ html, body { background: var(--bg); }
 .netsim .ceil-zone { fill: rgba(248, 113, 113, .05); }
 .netsim .floor { stroke: #334155; stroke-width: 2; }
 
+/* ---------- tienda (shopsim.js) ---------- */
+.netsim .srv.hot .node-box { stroke: var(--orange); }
+.netsim .srv.hung .node-box { fill: #33280a; stroke: var(--yellow); stroke-dasharray: 6 4; }
+.netsim .srv.hung .t-sub { fill: var(--yellow); font-weight: 700; }
+.netsim .srv.data.hot .node-box { stroke: var(--red); fill: #2a1118; }
+.netsim .srv.data.hot .t-sub { fill: var(--red); }
+.netsim .slot { fill: #0c2a2a; stroke: var(--teal); stroke-width: 1; }
+.netsim .slot.on { fill: var(--teal); }
+.netsim .pk.pick { cursor: pointer; }
+.netsim .pk.picked { stroke: #fff; stroke-width: 3; }
+
 /* ---------- portada ---------- */
 
 .title-slide .bg { position: absolute; top: 40px; left: 40%; width: 64%; height: 92%; opacity: .3; pointer-events: none;

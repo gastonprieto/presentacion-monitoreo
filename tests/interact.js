@@ -189,6 +189,162 @@ test('obs: breaker abre, prueba y cierra', async page => {
   check(r.closed === 'closed', JSON.stringify(r));
 });
 
+/* ---------- ShopSim: la tienda ---------- */
+
+// Crea una ShopSim sobre el svg suelto (código que corre en la página)
+const SHOP = `(svg, opts) => new ShopSimKit.ShopSim(svg, opts)`;
+
+test('shop: sano', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.fastForward(30);
+    return { c: s.window(10, 'checkout'), p: s.window(10, 'pagos') };
+  }`);
+  check(r.c.n > 30, `pocos checkouts: ${r.c.n}`);
+  check(r.c.errPct < 1, `errPct ${r.c.errPct}`);
+  check(r.p.sat < 0.8, `sat ${r.p.sat}`);
+});
+
+test('shop: slowdb satura el pool', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.fastForward(30);
+    const sano = s.window(10, 'checkout');
+    s.breakPagos('slowdb');
+    s.fastForward(30);
+    return { sano, c: s.window(10, 'checkout'), p: s.window(10, 'pagos') };
+  }`);
+  check(r.p.sat >= 0.95, `sat ${r.p.sat}`);
+  check(r.c.errPct > 5, `errPct ${r.c.errPct}`);
+  check(r.c.p95 > 3 * r.sano.p95, `p95 ${r.c.p95} vs sano ${r.sano.p95}`);
+});
+
+test('shop: primero la latencia, después los errores', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.fastForward(30);
+    const sano = s.window(10, 'checkout').p95;
+    s.breakPagos('slowdb');
+    let lat = null, err = null;
+    for (let i = 1; i <= 30; i++) {
+      s.fastForward(1);
+      const w = s.window(5, 'checkout');
+      if (lat === null && w.p95 > 2 * sano) lat = i;
+      if (err === null && w.errPct > 1) err = i;
+    }
+    return { sano, lat, err };
+  }`);
+  check(r.lat !== null && r.err !== null, JSON.stringify(r));
+  check(r.lat < r.err, `latencia en ${r.lat} s, errores en ${r.err} s`);
+});
+
+test('shop: logs del incidente', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.fastForward(10);
+    s.breakPagos('slowdb');
+    s.fastForward(30);
+    const e = s.logs.find(l => l.level === 'error' && l.service === 'pagos' && l.msg.includes('timeout acquiring db connection'));
+    return { e, n: s.logs.length, sinTrace: s.logs.filter(l => !l.traceId || !l.orderId).length,
+      warn: s.logs.some(l => l.level === 'warn'), info: s.logs.some(l => l.level === 'info') };
+  }`);
+  check(r.e, 'no hay log de timeout en pagos');
+  check(r.e.orderId && /^[0-9a-f]{8}$/.test(r.e.traceId), JSON.stringify(r.e));
+  check(r.n > 0 && r.n <= 300, `logs ${r.n}`);
+  check(r.sinTrace === 0, `${r.sinTrace} logs sin traceId u orderId`);
+  check(r.warn && r.info, JSON.stringify(r));
+});
+
+test('shop: la traza muestra dónde', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.fastForward(10);
+    s.breakPagos('slowdb');
+    s.fastForward(20);
+    const ok = s.traces.filter(t => t.spans.every(x => x.ok));
+    return { n: s.traces.length, t: ok[ok.length - 1] };
+  }`);
+  check(r.n <= 50, `trazas ${r.n}`);
+  check(r.t, 'no hay trazas OK');
+  const by = Object.fromEntries(r.t.spans.map(x => [x.service, x]));
+  check(by.ordenes && by.pagos && by.envios, JSON.stringify(r.t.spans));
+  const total = Math.max(...r.t.spans.map(x => x.end)) - Math.min(...r.t.spans.map(x => x.start));
+  const pagos = by.pagos.end - by.pagos.start;
+  check(pagos > 0.7 * total, `pagos ${pagos} de ${total}`);
+});
+
+test('shop: arreglar vuelve a sano', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.fastForward(10);
+    s.breakPagos('slowdb'); s.breakPagos('slowdb'); s.breakPagos('slowdb');
+    s.fastForward(20);
+    const roto = s.window(10).errPct;
+    s.heal(); s.heal();
+    s.fastForward(40);
+    return { roto, w: s.window(10), fault: s.fault };
+  }`);
+  check(r.roto > 5, `roto ${r.roto}`);
+  check(r.w.errPct < 1, `errPct ${r.w.errPct}`);
+  check(r.fault === null, `fault ${r.fault}`);
+});
+
+test('shop: la velocidad no cambia los números', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const { Speed } = NetKit, sp = Speed.value;
+    try {
+      Speed.value = 0.25;
+      const a = (${SHOP})(svg); a.fastForward(30);
+      Speed.value = 1.5;
+      const b = (${SHOP})(svg); b.fastForward(30);
+      // y en "tiempo real", con ticks de 50 ms a 1,5× y dibujando
+      const c = (${SHOP})(svg);
+      while (c.now < 30 - 1e-6) c.clock._tick(0, 50);
+      return { a: a.window(10, 'checkout'), b: b.window(10, 'checkout'), c: c.window(10, 'checkout'), cNow: c.now };
+    } finally { Speed.value = sp; }
+  }`);
+  check(r.a.n > 0 && JSON.stringify(r.a) === JSON.stringify(r.b), `${JSON.stringify(r.a)} vs ${JSON.stringify(r.b)}`);
+  check(JSON.stringify(r.a) === JSON.stringify(r.c), `tiempo real (${r.cNow}): ${JSON.stringify(r.c)}`);
+});
+
+test('shop: reset limpia todo', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOP})(svg);
+    s.breakPagos('slowdb');
+    s.fastForward(15);
+    const before = { logs: s.logs.length, traces: s.traces.length, gen: s.gen };
+    s.reset();
+    return { before, logs: s.logs.length, traces: s.traces.length, fault: s.fault, gen: s.gen, now: s.now, n: s.window(10).n };
+  }`);
+  check(r.before.logs > 0 && r.before.traces > 0, JSON.stringify(r.before));
+  check(r.logs === 0 && r.traces === 0 && r.fault === null, JSON.stringify(r));
+  check(r.gen === r.before.gen + 1 && r.n === 0, JSON.stringify(r));
+});
+
+test('shop: dibuja el pool en escritorio y celular', async page => {
+  const run = `(svg) => {
+    const s = (${SHOP})(svg, { showPool: true, replicas: 2 });
+    s.fastForward(5);
+    return { vb: svg.getAttribute('viewBox'), slots: svg.querySelectorAll('.slot').length,
+      on: svg.querySelectorAll('.slot.on').length, nodes: svg.querySelectorAll('.node-box').length };
+  }`;
+  await open(page, 0);
+  const d = await engine(page, run);
+  await open(page, 0, true);
+  const m = await engine(page, run);
+  check(d.vb === '0 0 900 590' && m.vb === '0 0 400 440', `${d.vb} / ${m.vb}`);
+  check(d.slots === 12 && m.slots === 12, `casilleros ${d.slots} / ${m.slots}`);
+  check(d.nodes === 6, `nodos ${d.nodes}`);
+});
+
 /* ---------- runner ---------- */
 
 (async () => {
