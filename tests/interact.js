@@ -131,6 +131,64 @@ test('obs: presupuesto de error', async page => {
   check(r.remainingPct <= 0 && r.remainingPct >= -100, `remaining ${r.remainingPct}`);
 });
 
+/* ---------- ObsKit: reacciones automáticas ---------- */
+
+test('obs: crash loop con backoff', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const s = new window.ObsKit.Supervisor({ policy: 'on-failure' });
+    const d = [0, 1, 2, 3, 4, 5].map(t => s.onExit(t, true));
+    const n = new window.ObsKit.Supervisor({ policy: 'no' });
+    return { d, no: n.onExit(0, true), restarts: s.restarts, state: s.state };
+  });
+  check(JSON.stringify(r.d) === '[1,2,4,8,16,16]', `delays: ${r.d}`);
+  check(r.no === null, `policy no: ${r.no}`);
+  check(r.restarts === 6 && r.state === 'backoff', `${r.restarts} ${r.state}`);
+});
+
+test('obs: backoff se resetea si estuvo sano', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const s = new window.ObsKit.Supervisor({ policy: 'always' });
+    s.onExit(0, true); s.onExit(1, true);
+    s.onHealthy(5);
+    return s.onExit(16, true);
+  });
+  check(r === 1, `delay ${r}`);
+});
+
+test('obs: autoscaler respeta cooldown y límites', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const a = new window.ObsKit.Autoscaler({ target: 0.7 });
+    const out = [a.step(0, 1.4, 1), a.step(3, 1.4, 2), a.step(9, 1.4, 2)];
+    const b = new window.ObsKit.Autoscaler({ target: 0.7 });
+    out.push(b.step(0, 1e6, 3));
+    const c = new window.ObsKit.Autoscaler({ target: 0.7 });
+    out.push(c.step(0, 0, 3));
+    return out;
+  });
+  check(JSON.stringify(r) === '[2,2,4,6,1]', `pasos: ${r}`);
+});
+
+test('obs: breaker abre, prueba y cierra', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const b = new window.ObsKit.CircuitBreaker({});
+    for (let i = 0; i < 5; i++) { b.allow(i); b.record(i, false); }
+    const o = { open: b.state, allowOpen: b.allow(5) };
+    o.first = b.allow(9);
+    o.half = b.state;
+    o.second = b.allow(9);
+    b.record(9, true);
+    o.closed = b.state;
+    return o;
+  });
+  check(r.open === 'open' && r.allowOpen === false, JSON.stringify(r));
+  check(r.half === 'half' && r.first === true && r.second === false, JSON.stringify(r));
+  check(r.closed === 'closed', JSON.stringify(r));
+});
+
 /* ---------- runner ---------- */
 
 (async () => {

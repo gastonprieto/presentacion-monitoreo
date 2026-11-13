@@ -124,5 +124,94 @@
     }
   }
 
-  window.ObsKit = { rng, percentile, MetricWindow, AlertRule, classifyAlerts, ErrorBudget };
+  // Reinicio automático con backoff exponencial: espera base × factor^k, hasta cap.
+  // Si el proceso estuvo sano resetAfter segundos antes de caer, el contador vuelve a cero.
+  class Supervisor {
+    constructor({ policy, base = 1, factor = 2, cap = 16, resetAfter = 10 }) {
+      this.policy = policy;
+      this.base = base;
+      this.factor = factor;
+      this.cap = cap;
+      this.resetAfter = resetAfter;
+      this.k = 0;
+      this.restarts = 0;
+      this.healthySince = null;
+      this._state = 'running';
+    }
+    get state() { return this._state; }
+    // Devuelve los segundos hasta el próximo arranque, o null si no reinicia
+    onExit(t, failed) {
+      if (this.healthySince !== null && t - this.healthySince >= this.resetAfter) this.k = 0;
+      this.healthySince = null;
+      if (this.policy === 'no' || (this.policy === 'on-failure' && !failed)) {
+        this._state = 'stopped';
+        return null;
+      }
+      const delay = Math.min(this.cap, this.base * Math.pow(this.factor, this.k));
+      this.k++;
+      this.restarts++;
+      this._state = 'backoff';
+      return delay;
+    }
+    // El proceso arrancó y responde: desde acá se cuenta el tiempo sano
+    onHealthy(t) {
+      if (this.healthySince === null) this.healthySince = t;
+      this._state = 'running';
+    }
+  }
+
+  // Escala réplicas según la métrica por réplica: desired = ceil(replicas × metric / target), entre min y max.
+  // Entre dos cambios pasa al menos cooldown. startup lo usa ShopSim para la demora de la réplica nueva.
+  class Autoscaler {
+    constructor({ min = 1, max = 6, target, cooldown = 8, startup = 3 }) {
+      this.min = min;
+      this.max = max;
+      this.target = target;
+      this.cooldown = cooldown;
+      this.startup = startup;
+      this.lastChange = -Infinity;
+    }
+    step(t, metricPerReplica, replicas) {
+      const raw = Math.ceil(replicas * metricPerReplica / this.target - 1e-9);
+      const desired = Math.max(this.min, Math.min(this.max, raw));
+      if (desired === replicas || t - this.lastChange < this.cooldown) return replicas;
+      this.lastChange = t;
+      return desired;
+    }
+  }
+
+  // Corta las llamadas a un destino que falla: closed → open (tras `failures` seguidas) → half (tras openFor,
+  // deja pasar una prueba) → closed si la prueba sale bien, open si falla.
+  class CircuitBreaker {
+    constructor({ failures = 5, openFor = 5 } = {}) {
+      this.failures = failures;
+      this.openFor = openFor;
+      this._state = 'closed';
+      this.fails = 0;
+      this.openedAt = 0;
+      this.probing = false;
+    }
+    get state() { return this._state; }
+    allow(t) {
+      if (this._state === 'open' && t - this.openedAt >= this.openFor) {
+        this._state = 'half';
+        this.probing = false;
+      }
+      if (this._state === 'closed') return true;
+      if (this._state === 'half' && !this.probing) { this.probing = true; return true; }
+      return false;
+    }
+    record(t, ok) {
+      if (ok) {
+        this.fails = 0;
+        if (this._state === 'half') this._state = 'closed';
+        return;
+      }
+      if (this._state === 'half') { this._state = 'open'; this.openedAt = t; return; }
+      if (this._state === 'closed' && ++this.fails >= this.failures) { this._state = 'open'; this.openedAt = t; }
+    }
+  }
+
+  window.ObsKit = { rng, percentile, MetricWindow, AlertRule, classifyAlerts, ErrorBudget,
+    Supervisor, Autoscaler, CircuitBreaker };
 })();
