@@ -13,6 +13,8 @@
     if (!inst) {
       inst = window.Scenes[name](slide);
       instances.set(slide, inst);
+      slide._scene = inst; // para las pruebas (tests/interact.js): sim o ff/state
+
     }
     inst.start();
   }

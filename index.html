@@ -37,23 +37,195 @@
   </aside>
 </section>
 
-<!-- ============ EL PROBLEMA ============ -->
-<section>
-  <div class="kicker">El problema</div>
-  <h2>Enterarse antes que el usuario</h2>
-  <p class="lead">Slide en construcción.</p>
+<!-- ============ 1. SIN SEÑALES ============ -->
+<section data-scene="sinsenales">
+  <div class="kicker red">Sin señales</div>
+  <h2>Todo anda… ¿o no?</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="complaint" hidden role="status"><span class="who">👤 un usuario</span>¿Se cayó la tienda? Hace 5 minutos que no puedo pagar 😤</div>
+      <div class="legend"><span><i style="background:#7dd3fc"></i>pedido</span><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento</span><span><i style="background:#f87171"></i>error</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">La tienda: cada compra pasa por <b>Órdenes</b>, <b>Pagos</b> y <b>Envíos</b>. Mirando sólo esto, ¿te darías cuenta si algo se rompe?</p>
+      <div class="actions">
+        <button class="btn danger" data-act="break" data-fault="slowdb">💥 Romper Pagos</button>
+        <button class="btn" data-act="heal">🔧 Arreglar</button>
+        <button class="btn ghost" data-act="reset">↺ Reiniciar</button>
+      </div>
+      <div class="box">
+        <div class="label">Tráfico</div>
+        <div class="slider-row"><input class="rate" type="range" min="1" max="12" step="1" value="6"><span class="rate-out">6 pedidos/s</span></div>
+      </div>
+      <div class="box blind">
+        <div class="label">Tu monitoreo</div>
+        <p>📉 sin gráficos · 📜 sin logs · 🔔 sin alertas</p>
+        <p class="found-out">Nadie se queja… ¿todo bien?</p>
+      </div>
+      <ul class="points">
+        <li class="fragment">Sin señales, el primero en enterarse es <b>el usuario</b>.</li>
+        <li class="fragment">Y te dice <b>que</b> falla, no <b>por qué</b> ni <b>dónde</b>.</li>
+      </ul>
+    </div>
+  </div>
   <aside class="notes">
-    Un sistema que anda no es lo mismo que un sistema que sabemos que anda. Acá se plantea el problema de fondo: sin mirar, nos enteramos tarde. Pregunta para la clase: ¿cómo se enteraron la última vez que algo se rompió en producción?
+    Dejar correr la tienda unos segundos: puntos verdes, todo bien. Preguntar cómo sabemos que anda: porque lo estamos mirando, y nadie mira un diagrama todo el día.
+    Romper Pagos: los puntos se ponen amarillos y después rojos, pero en el panel de la derecha no cambia nada. Unos segundos más tarde aparece la queja de un usuario. Ese es el único aviso.
+    Remarcar que la queja llega tarde (acá 8 segundos; en la vida real, minutos u horas) y que no dice qué servicio falla ni por qué. Todo el resto de la clase es para invertir el orden: enterarnos antes que el usuario.
+    Pregunta para la clase: si mañana se cae el sistema en el que trabajan, ¿por dónde se enterarían primero?
   </aside>
 </section>
 
-<!-- ============ MÉTRICAS ============ -->
+<!-- ============ 2. TRES PREGUNTAS ============ -->
 <section>
-  <div class="kicker">Métricas</div>
-  <h2>Métricas: números a lo largo del tiempo</h2>
-  <p class="lead">Slide en construcción.</p>
+  <div class="kicker">Tres preguntas</div>
+  <h2>¿Anda mal? ¿Qué pasó? ¿Dónde?</h2>
+  <div class="signals">
+    <div class="sig m fragment">
+      <h3><small>¿Anda mal?</small>📈 Métricas</h3>
+      <p>Números a lo largo del tiempo: pedidos por segundo, errores, latencia. Baratos de guardar y se leen de un vistazo.</p>
+      <div class="ex">
+        <svg class="spark" viewBox="0 0 200 50" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,40 30,41 60,39 90,40 110,38 125,26 140,14 160,8 200,6"/></svg>
+        <div class="ex-row">p95 de checkout <b>380 ms → 3,1 s</b></div>
+        <div class="ex-row">errores <b>0% → 14%</b></div>
+      </div>
+    </div>
+    <div class="sig l fragment">
+      <h3><small>¿Qué pasó?</small>📜 Logs</h3>
+      <p>Un renglón por cada cosa que pasa, con su nivel y sus datos. Cuentan el detalle de un pedido puntual.</p>
+      <div class="ex mono">
+        <div>INFO  ordenes orden #1042 creada</div>
+        <div class="w">WARN  pagos esperó 1,6 s por una conexión</div>
+        <div class="e">ERROR pagos timeout acquiring db connection order=#1042</div>
+      </div>
+    </div>
+    <div class="sig t fragment">
+      <h3><small>¿Dónde?</small>🧵 Trazas</h3>
+      <p>El recorrido de un pedido entre servicios, con cuánto tardó en cada uno. Señalan dónde se va el tiempo.</p>
+      <div class="ex">
+        <div class="wf"><span>Órdenes</span><i style="width:100%"></i></div>
+        <div class="wf hot"><span>Pagos</span><i style="margin-left:3%;width:88%"></i></div>
+        <div class="wf"><span>Envíos</span><i style="margin-left:92%;width:6%"></i></div>
+      </div>
+    </div>
+  </div>
+  <p class="signals-foot fragment">Las tres miran <b>la misma falla</b> desde lados distintos. Se complementan: ninguna alcanza sola.</p>
   <aside class="notes">
-    Las métricas resumen el comportamiento del sistema en números baratos de guardar. Pregunta para la clase: ¿qué número mirarían primero para saber si un servicio está sano?
+    La queja del usuario de la slide anterior dice "algo anda mal", y nada más. Para arreglarlo necesitamos contestar tres preguntas, y cada señal contesta una.
+    Métricas: si algo anda mal (el p95 y los errores suben). Logs: qué pasó en un pedido concreto (timeout pidiendo una conexión a la DB). Trazas: dónde se fue el tiempo (casi todo en Pagos).
+    Los ejemplos son del mismo incidente que vamos a romper una y otra vez en las próximas slides: Pagos se queda sin conexiones a su base de datos.
+    Pregunta para la clase: si sólo pudieran tener una de las tres, ¿cuál elegirían y qué perderían?
+  </aside>
+</section>
+
+<!-- ============ 3. MÉTRICAS ============ -->
+<section data-scene="metricas">
+  <div class="kicker purple">Métricas</div>
+  <h2>Contar y medir</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#7dd3fc"></i>pedido</span><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento</span><span><i style="background:#f87171"></i>error</span></div>
+    </div>
+    <div class="panel">
+      <div class="actions">
+        <button class="btn danger" data-act="break" data-fault="slowdb">💥 Romper Pagos</button>
+        <button class="btn" data-act="heal">🔧 Arreglar</button>
+        <button class="btn ghost" data-act="reset">↺</button>
+      </div>
+      <div class="slider-row"><input class="rate" type="range" min="1" max="12" step="1" value="6"><span class="rate-out">6 pedidos/s</span></div>
+      <div class="box dash">
+        <div class="label">Dashboard · últimos 10 s</div>
+        <div class="dash-row"><span class="dash-svc">🧾 Órdenes</span><div class="sstats mini" data-service="ordenes" data-fields="rps,errPct,p95" data-window="10"></div></div>
+        <div class="dash-row"><span class="dash-svc">💳 Pagos</span><div class="sstats mini" data-service="pagos" data-fields="rps,errPct,p95" data-window="10"></div></div>
+        <div class="dash-row"><span class="dash-svc">📦 Envíos</span><div class="sstats mini" data-service="envios" data-fields="rps,errPct,p95" data-window="10"></div></div>
+      </div>
+      <ul class="types">
+        <li class="fragment"><b>Contador</b> sólo sube: pedidos atendidos <code data-v="count">0</code></li>
+        <li class="fragment"><b>Gauge</b> sube y baja: conexiones de Pagos en uso <code data-v="gauge">0 de 3</code></li>
+        <li class="fragment"><b>Histograma</b> reparte en baldes: latencia de checkout
+          <div class="histo-mini">
+            <div class="hb"><i></i><b>0</b><span>≤ 0,5 s</span></div>
+            <div class="hb"><i></i><b>0</b><span>0,5–2 s</span></div>
+            <div class="hb bad"><i></i><b>0</b><span>&gt; 2 s</span></div>
+          </div>
+        </li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Una métrica es un número con una marca de tiempo, por servicio. Cada servicio publica cuántos pedidos atiende por segundo, qué porcentaje falla y cuánto tarda (p95: el 95% tarda menos que eso).
+    Los tres tipos básicos, con ejemplos de esta misma tienda: un contador sólo sube (pedidos atendidos; lo interesante es cuánto sube por segundo), un gauge sube y baja (conexiones en uso ahora), y un histograma cuenta cuántos pedidos cayeron en cada balde de latencia, de donde salen los percentiles.
+    Romper Pagos: en el dashboard se ve en qué servicio sube el p95 y aparecen errores. El histograma corre los pedidos hacia el balde lento y el gauge se clava en 3 de 3. Órdenes también sube, porque espera a Pagos; Envíos sigue igual.
+    Pregunta para la clase: ¿con cuál de estos números se habrían enterado antes que el usuario de la slide 1?
+  </aside>
+</section>
+
+<!-- ============ 4. PERCENTILES ============ -->
+<section data-scene="percentiles">
+  <div class="kicker purple">Percentiles</div>
+  <h2>El promedio esconde la falla</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento (más de 1 s)</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Algunos pagos caen en una consulta <b>10 veces más lenta</b>. ¿Qué número se entera?</p>
+      <div class="box">
+        <div class="label">Pedidos lentos</div>
+        <div class="slider-row"><input class="slow" type="range" min="0" max="20" step="1" value="0"><span class="rate-out slow-out">0%</span></div>
+      </div>
+      <div class="sstats big" data-service="checkout" data-fields="avg,p50,p95,p99" data-window="20"></div>
+      <div class="chart-box" style="height:140px"><canvas class="svc-chart" data-service="checkout" data-fields="avg,p99"></canvas></div>
+      <div class="actions"><button class="btn ghost" data-act="reset">↺ Reiniciar</button></div>
+      <ul class="points">
+        <li class="fragment">Con 5% lentos, el promedio casi no se mueve; el <b>p99</b> se multiplica.</li>
+        <li class="fragment">p99 = lo que sufre <b>1 de cada 100</b> usuarios. Con miles por minuto, son muchos.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Arrancar en 0%: promedio, p50, p95 y p99 están todos cerca (unos 400 ms). Subir a 5%: el promedio sube un poquito, el p50 ni se entera y el p99 salta a varios segundos.
+    El promedio mezcla 95 pedidos rápidos con 5 lentos y da un número que no vive nadie. El p95 dice "el 95% tarda menos que esto"; el p99, lo mismo con el 99%. Por eso los dashboards y las alertas de latencia miran percentiles altos.
+    Puente opcional: en load balancer usamos el p95 para comparar algoritmos; acá vemos por qué no alcanzaba con el promedio.
+    Pregunta para la clase: si su servicio atiende 10.000 pedidos por minuto, ¿cuántas personas por minuto viven el p99?
+  </aside>
+</section>
+
+<!-- ============ 5. SEÑALES DORADAS ============ -->
+<section data-scene="doradas">
+  <div class="kicker purple">Señales doradas</div>
+  <h2>Latencia, tráfico, errores, saturación</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#2dd4bf"></i>conexión en uso</span><span><i style="background:#fb923c"></i>esperando conexión</span><span><i style="background:#f87171"></i>error</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Cuatro números de <b>Pagos</b> que alcanzan para saber si un servicio sufre.</p>
+      <div class="actions">
+        <button class="btn danger" data-act="break" data-fault="slowdb">💥 DB lenta</button>
+        <button class="btn" data-act="heal">🔧 Arreglar</button>
+        <button class="btn ghost" data-act="reset">↺</button>
+      </div>
+      <div class="box two">
+        <div class="slider-row"><span class="sl-name">Tráfico</span><input class="rate" type="range" min="1" max="16" step="1" value="6"><span class="rate-out">6 pedidos/s</span></div>
+        <div class="slider-row"><span class="sl-name">Pool</span><input class="pool" type="range" min="1" max="8" step="1" value="3"><span class="rate-out pool-out">3 conexiones</span></div>
+      </div>
+      <div class="sstats four" data-service="pagos" data-fields="p95,rps,errPct,sat" data-window="3" data-labels="Latencia,Tráfico,Errores,Saturación"></div>
+      <div class="chart-box" style="height:130px"><canvas class="svc-chart" data-service="pagos" data-fields="sat,errPct"></canvas></div>
+      <ul class="points">
+        <li class="fragment">La <b>saturación</b> avisa primero: el pool llega al 100% y recién después aparecen los 503.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Las cuatro señales doradas: latencia (cuánto tarda), tráfico (cuánto le piden), errores (cuánto falla) y saturación (qué tan lleno está el recurso más escaso). Acá el recurso escaso es el pool de conexiones de Pagos a su base de datos: los casilleros verdes debajo de Pagos.
+    Subir el tráfico hasta 12 o más: el pool se llena, la latencia sube y, si sigue, aparecen errores. Bajar el tráfico y apretar "DB lenta": la saturación llega al 100% en un segundo y los errores tardan un par más, porque primero los pedidos esperan una conexión.
+    Probar agrandar el pool con la DB lenta: alivia un poco, pero son más consultas contra la misma base. Dejarlo como pregunta abierta; lo retomamos en "Reaccionar solo".
+    Pregunta para la clase: de las cuatro, ¿cuál les daría más tiempo para reaccionar antes de que el usuario note algo?
   </aside>
 </section>
 

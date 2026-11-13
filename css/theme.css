@@ -404,6 +404,101 @@ html.mobile .speed-ctl { left: auto; right: 10px; bottom: 10px; opacity: .7; fon
 html.mobile .speed-ctl button { font-size: 16px; padding: 5px 7px; }
 html.mobile .speed-ctl span { min-width: 34px; }
 
+
+/* ---------- slides 1–5: el problema y las métricas ---------- */
+
+/* 1. queja de un usuario: globo genérico sobre Usuarios */
+.complaint {
+  position: absolute; left: 14px; top: 96px; width: 270px; z-index: 2;
+  background: #f8fafc; color: #0f172a; border-radius: 16px; padding: 10px 14px 12px;
+  font-size: 16px; line-height: 1.35; box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  animation: bubble-in .45s cubic-bezier(.2, 1.4, .4, 1);
+  transform-origin: 40px 100%;
+}
+.complaint::after { content: ''; position: absolute; left: 44px; bottom: -12px; border: 7px solid transparent; border-top: 7px solid #f8fafc; border-left: 9px solid #f8fafc; }
+.complaint .who { display: block; font: 700 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: #64748b; margin-bottom: 3px; }
+@keyframes bubble-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+.box.blind p { font-size: 15px; color: var(--muted); }
+.box.blind .found-out { margin-top: 6px; color: #cbd5e1; }
+.box.blind .found-out.late { color: var(--red); }
+.box.blind .found-out.late b { color: var(--red); }
+
+/* 2. tres señales: cada una con su color fijo (métricas violeta, logs gris claro, trazas naranja) */
+.signals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 22px; }
+.sig { --sc: var(--purple); background: var(--panel); border: 1px solid var(--line); border-top: 4px solid var(--sc); border-radius: 14px; padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; min-height: 410px; box-sizing: border-box; }
+.sig.l { --sc: #cbd5e1; }
+.sig.t { --sc: #fb923c; }
+.sig h3 { font-size: 30px; margin: 0; color: var(--sc); }
+.sig h3 small { display: block; font: 800 27px var(--sans); color: #fff; margin-bottom: 6px; letter-spacing: -.01em; }
+.sig p { font-size: 19px; color: #cbd5e1; line-height: 1.45; }
+.sig .ex { margin-top: auto; background: #0b1228; border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-height: 128px; box-sizing: border-box; justify-content: center; }
+.sig .ex-row { font: 14px var(--mono); color: var(--muted); }
+.sig .ex-row b { color: #fff; }
+.sig .spark { width: 100%; height: 50px; }
+.sig .spark polyline { fill: none; stroke: var(--purple); stroke-width: 2.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.sig .ex.mono { font: 13px/1.5 var(--mono); color: #cbd5e1; gap: 4px; }
+.sig .ex.mono .w { color: var(--yellow); }
+.sig .ex.mono .e { color: var(--red); }
+.sig .wf { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; font: 13px var(--mono); color: #cbd5e1; }
+.sig .wf i { display: block; height: 18px; border-radius: 3px; background: rgba(251, 146, 60, .45); grid-column: 2; box-sizing: border-box; }
+.sig .wf span { grid-column: 1; }
+.sig .wf i { grid-row: 1; }
+.sig .wf.hot i { background: var(--orange); outline: 2px solid var(--orange); outline-offset: 1px; }
+.sig .wf.hot span { color: var(--orange); font-weight: 700; }
+.signals-foot { margin-top: 24px !important; font-size: 22px; color: #cbd5e1; text-align: center; }
+
+/* 3. mini dashboard por servicio y un ejemplo vivo de cada tipo de métrica */
+.dash { display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; }
+.dash .label { margin-bottom: 0; }
+.dash-row { display: grid; grid-template-columns: 92px 1fr; gap: 6px; align-items: center; }
+.dash-svc { font-size: 14px; font-weight: 700; color: #e2e8f0; white-space: nowrap; }
+.sstats.mini { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.sstats.mini .sstat { padding: 3px 6px; border-radius: 8px; }
+.sstats.mini .sstat b { font-size: 14px; }
+.sstats.mini .sstat span { font-size: 9.5px; }
+.types { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 15px; color: #cbd5e1; }
+.types li { line-height: 1.35; }
+.types b { color: var(--purple); }
+.types code { color: #fff; background: rgba(167, 139, 250, .15); white-space: nowrap; }
+.histo-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+.histo-mini .hb { display: grid; grid-template-columns: 1fr auto; grid-template-rows: 40px auto; column-gap: 6px; align-items: end; }
+.histo-mini .hb i { display: block; height: 0; min-height: 2px; background: var(--purple); border-radius: 3px 3px 0 0; transition: height .25s; align-self: end; }
+.histo-mini .hb.bad i { background: var(--red); }
+.histo-mini .hb b { font: 700 13px var(--mono); color: #fff; align-self: end; }
+.histo-mini .hb span { grid-column: 1 / -1; font: 11px var(--mono); color: var(--muted); border-top: 1px solid var(--line); padding-top: 2px; }
+
+/* 4. percentiles grandes */
+.sstats.big { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.sstats.big .sstat { padding: 6px 6px; }
+.sstats.big .sstat b { font-size: 16px; }
+.sstat.s-avg { border-top-color: #cbd5e1; }
+.sstat.s-p99 b { color: var(--pink); }
+.sstat.s-p95 b { color: var(--purple); }
+
+/* 5. dos sliders en una caja */
+.box .slider-row + .slider-row { margin-top: 8px; }
+.sl-name { font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); width: 62px; }
+.sstats.four { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.sstats.four .sstat { padding: 6px 6px; }
+.sstats.four .sstat b { font-size: 17px; }
+.sstats.four .sstat span, .sstats.big .sstat span { font-size: 10px; letter-spacing: .03em; }
+.box.two .rate-out { min-width: 122px; }
+
+html.mobile .complaint { position: relative; top: auto; left: auto; order: 1; width: auto; margin: 4px 10px 12px; font-size: 15px; transform-origin: 40px 0; }
+html.mobile .complaint::after { left: 44px; top: -12px; bottom: auto; border: 7px solid transparent; border-bottom: 7px solid #f8fafc; border-left: 9px solid #f8fafc; }
+html.mobile .stage .legend { order: 2; }
+html.mobile .signals { grid-template-columns: 1fr; gap: 12px; margin-top: 8px; }
+html.mobile .sig { min-height: 0; padding: 14px; }
+html.mobile .sig h3 { font-size: 22px; }
+html.mobile .sig h3 small { font-size: 19px; }
+html.mobile .sig p { font-size: 15px; }
+html.mobile .sig .ex.mono { font-size: 11px; overflow-wrap: anywhere; }
+html.mobile .signals-foot { font-size: 16px; text-align: left; }
+html.mobile .types { font-size: 15px; }
+html.mobile .box.two .rate-out { min-width: 104px; font-size: 14px; }
+html.mobile .sstats.four { grid-template-columns: repeat(2, 1fr); }
+html.mobile .sig .ex { min-height: 0; }
+
 [hidden] { display: none !important; }
 
 /* Link al repo en la diapositiva final (icono de GitHub) */

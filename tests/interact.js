@@ -762,6 +762,86 @@ test('widget: logs siguen después de un reset', async page => {
   check(r.lines.length > 0, `no aparecen líneas nuevas tras el reset (t=${r.t})`);
 });
 
+/* ---------- escenas: el problema y las métricas ---------- */
+
+// Índices de slide (0-based)
+const SL = { sinsenales: 1, preguntas: 2, metricas: 3, percentiles: 4, doradas: 5 };
+
+// Mueve un slider de la slide y dispara 'input'
+const SLIDE_INPUT = `(sec, sel, v) => { const r = sec.querySelector(sel); r.value = v; r.dispatchEvent(new Event('input')); }`;
+
+test('escena sinsenales: la queja llega después del error', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.sinsenales, sec => {
+    const sc = sec._scene, sim = sc.sim;
+    sim.fastForward(10);
+    const antes = sc.state();
+    sec.querySelector('[data-act=break]').click();
+    sim.fastForward(30);
+    const st = sc.state();
+    const bubble = sec.querySelector('.complaint');
+    const shown = !bubble.hidden;
+    sec.querySelector('[data-act=reset]').click();
+    return { antes, st, shown, after: !sec.querySelector('.complaint').hidden };
+  });
+  check(r.antes.firstErr === null && r.antes.complaintAt === null, `antes de romper: ${JSON.stringify(r.antes)}`);
+  check(r.st.firstErr !== null && r.st.complaintAt !== null, JSON.stringify(r.st));
+  check(r.st.complaintAt - r.st.firstErr >= 5, `queja ${r.st.complaintAt} vs error ${r.st.firstErr}`);
+  check(r.shown, 'el globo de la queja no se ve');
+  check(!r.after, 'el globo sigue después del reset');
+});
+
+test('escena percentiles: subir % lentos mueve p99 y no el promedio', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.percentiles, `(sec, SI) => {
+    const sim = sec._scene.sim;
+    eval(SI)(sec, 'input.slow', 0);
+    sim.fastForward(40);
+    const w0 = sim.window(30, 'checkout');
+    eval(SI)(sec, 'input.slow', 5);
+    sim.fastForward(40);
+    const w5 = sim.window(30, 'checkout');
+    return { w0, w5, ratio: sim.o.slowRatio, out: sec.querySelector('.slow-out').textContent };
+  }`, SLIDE_INPUT);
+  check(r.ratio === 0.05, `slowRatio ${r.ratio}`);
+  check(r.out.includes('5'), `rótulo: ${r.out}`);
+  check(r.w5.p99 >= 5 * r.w0.p99, `p99 ${r.w0.p99} → ${r.w5.p99}`);
+  check(r.w5.avg < 1.5 * r.w0.avg, `avg ${r.w0.avg} → ${r.w5.avg}`);
+});
+
+test('escena doradas: la saturación llega antes que los errores', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.doradas, sec => {
+    const sim = sec._scene.sim;
+    sim.fastForward(20);
+    const sano = sim.window(5, 'pagos');
+    sec.querySelector('[data-act=break]').click();
+    // la misma ventana que muestran los números de la slide (data-window="3"), en pasos de 0,2 s
+    const win = +sec.querySelector('.sstats').dataset.window;
+    let sat = null, err = null;
+    for (let i = 1; i <= 150; i++) {
+      sim.fastForward(0.2);
+      const w = sim.window(win, 'pagos'), t = Math.round(i * 2) / 10;
+      if (sat === null && w.sat >= 0.95) sat = t;
+      if (err === null && w.errPct > 1) err = t;
+    }
+    return { sano: { sat: sano.sat, errPct: sano.errPct }, sat, err, win, pool: sim.o.showPool };
+  });
+  check(r.pool === true, 'showPool apagado');
+  check(r.sano.sat < 0.95 && r.sano.errPct <= 1, `sano: ${JSON.stringify(r.sano)}`);
+  check(r.sat !== null && r.err !== null, JSON.stringify(r));
+  check(r.err - r.sat >= 1, `saturación en ${r.sat} s, errores en ${r.err} s (ventana ${r.win} s)`);
+});
+
+test('escena doradas: el slider de pool redibuja las conexiones', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.doradas, `(sec, SI) => {
+    eval(SI)(sec, 'input.pool', 6);
+    return { pool: sec._scene.sim.o.pool, slots: sec.querySelectorAll('svg.sim .slot').length, out: sec.querySelector('.pool-out').textContent };
+  }`, SLIDE_INPUT);
+  check(r.pool === 6 && r.slots === 6, JSON.stringify(r));
+});
+
 /* ---------- runner ---------- */
 
 (async () => {
