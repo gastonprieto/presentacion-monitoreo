@@ -762,10 +762,69 @@ test('widget: logs siguen después de un reset', async page => {
   check(r.lines.length > 0, `no aparecen líneas nuevas tras el reset (t=${r.t})`);
 });
 
+test('widget: logs busca el pedido exacto', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    const input = c.logs.querySelector('input.log-search');
+    input.value = '100'; input.dispatchEvent(new Event('input'));
+    const parcial = c.logs.querySelectorAll('.log-line').length;
+    const id = c.sim.logs[c.sim.logs.length - 10].orderId;
+    input.value = '#' + id; input.dispatchEvent(new Event('input'));
+    const exacto = [...c.logs.querySelectorAll('.log-line')].map(l => l.textContent);
+    return { parcial, exacto, id };
+  }`));
+  check(r.parcial === 0, `«100» encuentra ${r.parcial} líneas (substring)`);
+  check(r.exacto.length > 0 && r.exacto.every(t => t.includes(`order=#${r.id} `)), `#${r.id}: ${r.exacto.slice(0, 2)}`);
+});
+
+test('widget: cascada fijada sobrevive al ring y se suelta con reset', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    const tr = c.sim.traces[0];
+    c.traceW.select(tr.traceId);
+    c.sim.fastForward(20); // el ring de 50 trazas ya la descartó
+    const evicted = !c.sim.traces.includes(tr);
+    c.traceW.render();
+    const kept = c.trace.querySelector('.tr-head').textContent;
+    c.sim.reset();
+    c.sim.fastForward(5);
+    const after = c.trace.textContent;
+    return { evicted, kept, id: tr.orderId, after, cur: c.traceW.current, latest: c.sim.traces.slice(-1)[0].traceId };
+  }`, 5));
+  check(r.evicted, 'la prueba no llegó a vaciar el ring');
+  check(r.kept.includes(`#${r.id}`), `la fijada se perdió: ${r.kept}`);
+  check(!r.after.includes('Todavía no hay trazas'), 'trabada en «Todavía no hay trazas» tras el reset');
+  check(r.cur === r.latest, `tras el reset no sigue la última: ${r.cur} vs ${r.latest}`);
+});
+
+test('widget: cascada con un id que no está vuelve a la última', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.traceW.select('ffffffff');
+    const cur = c.traceW.current, latest = c.sim.traces.slice(-1)[0].traceId;
+    c.sim.fastForward(2);
+    return { cur, latest, cur2: c.traceW.current, latest2: c.sim.traces.slice(-1)[0].traceId };
+  }`, 5));
+  check(r.cur === r.latest && r.cur2 === r.latest2, JSON.stringify(r));
+});
+
+test('widget: cascada resalta el más largo sin contar Órdenes aunque no sea el primero', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(widgetPage(`(c) => {
+    c.traceW.select({ traceId: 'abcd0123', orderId: 9999, ok: true, spans: [
+      { service: 'pagos', start: 0.1, end: 1.6, ok: true },
+      { service: 'ordenes', start: 0, end: 1.8, ok: true },
+      { service: 'envios', start: 1.6, end: 1.7, ok: true }] });
+    return { hl: [...c.trace.querySelectorAll('.t-row.longest')].map(r => r.dataset.service), head: c.trace.querySelector('.tr-head').textContent };
+  }`, 2));
+  check(r.hl.join() === 'pagos', `resaltado: ${r.hl}`);
+  check(r.head.includes('#9999'), r.head);
+});
+
 /* ---------- escenas: el problema y las métricas ---------- */
 
 // Índices de slide (0-based)
-const SL = { sinsenales: 1, preguntas: 2, metricas: 3, percentiles: 4, doradas: 5 };
+const SL = { sinsenales: 1, preguntas: 2, metricas: 3, percentiles: 4, doradas: 5, logs: 6, centralizar: 7, trazas: 8, tresjuntas: 9 };
 
 // Mueve un slider de la slide y dispara 'input'
 const SLIDE_INPUT = `(sec, sel, v) => { const r = sec.querySelector(sel); r.value = v; r.dispatchEvent(new Event('input')); }`;
@@ -865,6 +924,135 @@ test('escena doradas: el slider de pool redibuja las conexiones', async page => 
     return { pool: sec._scene.sim.o.pool, slots: sec.querySelectorAll('svg.sim .slot').length, out: sec.querySelector('.pool-out').textContent };
   }`, SLIDE_INPUT);
   check(r.pool === 6 && r.slots === 6, JSON.stringify(r));
+});
+
+/* ---------- escenas: logs y trazas ---------- */
+
+test('escena logs: buscar el último error muestra sólo ese pedido', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.logs, sec => {
+    const sim = sec._scene.sim;
+    sim.fastForward(8);
+    sec.querySelector('[data-act=break]').click();
+    sim.fastForward(15);
+    sec.querySelector('[data-act=last-error]').click();
+    const q = sec.querySelector('input.log-search').value;
+    const lines = [...sec.querySelectorAll('.log-line')].map(l => l.textContent);
+    return { q, lines };
+  });
+  check(/^\d+$/.test(r.q), `búsqueda: ${r.q}`);
+  check(r.lines.length > 0 && r.lines.every(t => t.includes(`order=#${r.q} `)), `líneas: ${r.lines.slice(0, 3)}`);
+  check(r.lines.some(t => t.includes('ERROR')), 'el pedido buscado no tiene su error');
+});
+
+test('escena centralizar: por réplica el pedido aparece en una sola caja', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.centralizar, sec => {
+    const sim = sec._scene.sim;
+    sec.querySelector('.seg[data-group=where] [data-v=replica]').click();
+    sim.fastForward(12);
+    const id = sim.logs.filter(l => l.service === 'pagos').slice(-5)[0].orderId;
+    const input = sec.querySelector('input.order-search');
+    input.value = String(id); input.dispatchEvent(new Event('input'));
+    const boxes = [...sec.querySelectorAll('.rep-box')].map(b => ({ vis: !b.closest('[hidden]'), n: b.querySelectorAll('.log-line').length }));
+    sec.querySelector('.seg[data-group=fmt] [data-v=json]').click();
+    const json = [...sec.querySelectorAll('.rep-box .log-line')].map(l => l.textContent);
+    sec.querySelector('.seg[data-group=where] [data-v=central]').click();
+    const central = [...sec.querySelectorAll('.logs .log-line')].filter(l => !l.closest('[hidden]')).map(l => l.textContent);
+    return { id, reps: sim.replicaCount, boxes, json, central };
+  });
+  check(r.reps === 3, `réplicas: ${r.reps}`);
+  check(r.boxes.length === 3 && r.boxes.every(b => b.vis), JSON.stringify(r.boxes));
+  check(r.boxes.filter(b => b.n > 0).length === 1, `cajas con el pedido #${r.id}: ${JSON.stringify(r.boxes)}`);
+  check(r.json.length > 0 && r.json.every(t => JSON.parse(t).orderId === r.id), `json: ${r.json[0]}`);
+  const svcs = new Set(r.central.map(t => JSON.parse(t).service));
+  check(svcs.has('ordenes') && svcs.has('pagos'), `central no junta servicios: ${[...svcs]}`);
+});
+
+test('escena trazas: el clic abre la traza de ese pedido', async page => {
+  await open(page);
+  await goto(page, SL.trazas);
+  await page.waitForFunction(i => window.__sec(i).querySelector('svg.sim circle.pick[data-order]'), { timeout: 4000 }, SL.trazas);
+  const r = await page.evaluate(i => {
+    const sec = window.__sec(i), sim = sec._scene.sim;
+    const dot = sec.querySelector('svg.sim circle.pick[data-order]');
+    const id = +dot.dataset.order;
+    dot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    sim.fastForward(6);
+    return { id, head: sec.querySelector('.trace .tr-head').textContent, cur: sec._scene.state() };
+  }, SL.trazas);
+  check(r.head.includes(`#${r.id} `) || r.head.includes(`#${r.id}`) && !r.head.includes(`#${r.id}0`), `cascada: ${r.head} (clic en #${r.id})`);
+  check(r.cur.orderId === r.id, JSON.stringify(r.cur));
+});
+
+test('escena trazas: con Pagos roto la cascada muestra Pagos largo', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.trazas, sec => {
+    const sim = sec._scene.sim;
+    sim.fastForward(5);
+    sec.querySelector('[data-act=break]').click();
+    sim.fastForward(15);
+    sec.querySelector('[data-act=slowest]').click();
+    return { hl: [...sec.querySelectorAll('.trace .t-row.longest')].map(r => r.dataset.service), dur: sec.querySelector('.tr-dur').textContent };
+  });
+  check(r.hl.join() === 'pagos', `resaltado: ${r.hl}`);
+  check(/\d+,\d s/.test(r.dur), `duración: ${r.dur}`);
+});
+
+test('escena tresjuntas: el recorrido llega a logs del mismo trace', async page => {
+  await open(page);
+  await goto(page, SL.tresjuntas);
+  // avanza a un momento con Pagos ya roto (se rompe solo a los pocos segundos)
+  const pt = await page.evaluate(i => {
+    const sec = window.__sec(i), sim = sec._scene.sim;
+    sim.fastForward(25);
+    const cv = sec.querySelector('canvas.svc-chart'), ch = Chart.getChart(cv);
+    const idx = ch.data.labels.length - 11; // unos 5 s atrás: esos pedidos ya terminaron
+    const b = cv.getBoundingClientRect(), sx = b.width / cv.offsetWidth, sy = b.height / cv.offsetHeight;
+    const x = ch.scales.x.getPixelForValue(idx), y = (ch.chartArea.top + ch.chartArea.bottom) / 2;
+    return { x: b.left + x * sx, y: b.top + y * sy };
+  }, SL.tresjuntas);
+  await page.mouse.click(pt.x, pt.y);
+  await sleep(250); // Chart.js atiende los eventos en el próximo frame
+  const r = await page.evaluate(i => {
+    const sec = window.__sec(i), sc = sec._scene;
+    const s1 = sc.state();
+    const rows = [...sec.querySelectorAll('.tj-row')];
+    const row = rows.find(x => x.classList.contains('err'));
+    if (!row) return { s1, rows: rows.length };
+    row.click();
+    const s2 = sc.state();
+    const head = sec.querySelector('.trace .tr-head').textContent;
+    sec.querySelector('.trace .t-row[data-service=pagos]').click();
+    const s3 = sc.state();
+    const lines = [...sec.querySelectorAll('.tj-logs .log-line')].map(l => ({ trace: l.dataset.trace, text: l.textContent }));
+    const crumbs = [...sec.querySelectorAll('.crumbs .crumb.on')].map(c => c.textContent);
+    return { s1, s2, s3, head, lines, crumbs, rows: rows.length };
+  }, SL.tresjuntas);
+  check(r.s1.step === 'traces' && r.s1.moment > 6, `tras el clic en el gráfico: ${JSON.stringify(r.s1)}`);
+  check(r.rows > 0 && r.rows <= 6, `trazas listadas: ${r.rows}`);
+  check(r.s2 && r.s2.step === 'trace' && r.head.includes(r.s2.traceId), `cascada: ${r.head} ${JSON.stringify(r.s2)}`);
+  check(r.s3.step === 'logs' && r.s3.traceId === r.s2.traceId, JSON.stringify(r.s3));
+  check(r.lines.length > 0 && r.lines.every(l => l.trace === r.s2.traceId), `logs de otra traza: ${JSON.stringify(r.lines.slice(0, 3))}`);
+  check(r.lines.some(l => l.text.includes('timeout acquiring db connection')), `sin el timeout: ${r.lines.map(l => l.text)}`);
+  check(r.crumbs.length === 3, `migas: ${r.crumbs}`);
+});
+
+test('escena tresjuntas: las migas vuelven atrás', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.tresjuntas, sec => {
+    const sc = sec._scene, sim = sc.sim;
+    sim.fastForward(25);
+    sc.pickMoment(sim.now - 5);
+    sec.querySelector('.tj-row').click();
+    sec.querySelector('.trace .t-row[data-service=pagos]').click();
+    const a = sc.state().step;
+    sec.querySelector('.crumb[data-step=trace]').click();
+    const b = sc.state().step, logsHidden = sec.querySelector('.tj-logs .log-line') === null;
+    sec.querySelector('.crumb[data-step=metric]').click();
+    return { a, b, logsHidden, c: sc.state().step };
+  });
+  check(r.a === 'logs' && r.b === 'trace' && r.logsHidden && r.c === 'metric', JSON.stringify(r));
 });
 
 /* ---------- runner ---------- */

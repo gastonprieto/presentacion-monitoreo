@@ -229,23 +229,162 @@
   </aside>
 </section>
 
-<!-- ============ LOGS ============ -->
-<section>
-  <div class="kicker">Logs</div>
-  <h2>Logs: qué pasó, evento por evento</h2>
-  <p class="lead">Slide en construcción.</p>
+<!-- ============ 6. LOGS ============ -->
+<section data-scene="logs">
+  <div class="kicker gray">Logs</div>
+  <h2>Qué pasó en este pedido</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#7dd3fc"></i>pedido</span><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento</span><span><i style="background:#f87171"></i>error</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Cada servicio anota <b>un renglón por cada cosa que pasa</b>: cuándo, qué nivel, qué pedido.</p>
+      <div class="actions">
+        <button class="btn danger" data-act="break" data-fault="slowdb">💥 DB lenta</button>
+        <button class="btn icon" data-act="heal" title="Arreglar" aria-label="Arreglar">🔧</button>
+        <button class="btn ghost" data-act="last-error">🔎 Último error</button>
+      </div>
+      <div class="logs"></div>
+      <ul class="points">
+        <li class="fragment"><b>info</b> es lo normal, <b>warn</b> algo raro, <b>error</b> algo que falló.</li>
+        <li class="fragment">Buscando el <b>pedido</b> aparece su historia, renglón por renglón.</li>
+      </ul>
+    </div>
+  </div>
   <aside class="notes">
-    Los logs cuentan los hechos uno por uno. Pregunta para la clase: ¿qué información les gustaría encontrar en un log a las tres de la mañana?
+    Las métricas dijeron que algo anda mal en Pagos. Los logs cuentan qué pasó: cada servicio escribe un renglón por evento, con la hora, el nivel, el servicio, el mensaje y el número de pedido.
+    Con todo sano casi todo es info. Romper la DB: aparecen warn (esperó por una conexión) y después error (timeout acquiring db connection → 503). Filtrar por error para ver sólo lo que falló.
+    Apretar "Último error": el buscador se llena con ese pedido y queda su historia completa: Órdenes lo creó, Pagos esperó una conexión y se cansó, Órdenes le contestó error al usuario. Es exactamente la respuesta que le faltaba a la queja de la slide 1.
+    Pregunta para la clase: ¿qué datos tendría que tener cada renglón para que puedan encontrar el pedido de un usuario que se queja?
   </aside>
 </section>
 
-<!-- ============ TRAZAS ============ -->
-<section>
-  <div class="kicker">Trazas</div>
-  <h2>Trazas: el recorrido de un pedido</h2>
-  <p class="lead">Slide en construcción.</p>
+<!-- ============ 7. CENTRALIZAR ============ -->
+<section data-scene="centralizar">
+  <div class="kicker gray">Logs</div>
+  <h2>Estructurados y en un solo lugar</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#7dd3fc"></i>pedido</span><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento</span><span><i style="background:#f87171"></i>error</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Pagos tiene <b>3 réplicas</b>, cada una con sus logs. ¿Dónde buscás un pedido?</p>
+      <div class="opts">
+        <div class="seg" data-group="where"><button type="button" data-v="replica" class="active">por réplica</button><button type="button" data-v="central">central</button></div>
+        <div class="seg" data-group="fmt"><button type="button" data-v="text" class="active">texto</button><button type="button" data-v="json">estructurado</button></div>
+      </div>
+      <div class="actions search-row">
+        <input class="order-search log-search" type="search" placeholder="Pedido" aria-label="Buscar por pedido" inputmode="numeric">
+        <button class="btn ghost" data-act="pick-order">🔎 Un pedido</button>
+        <button class="btn danger icon" data-act="break" data-fault="slowdb" title="DB lenta" aria-label="DB lenta">💥</button>
+        <button class="btn icon" data-act="heal" title="Arreglar" aria-label="Arreglar">🔧</button>
+      </div>
+      <div class="rep-logs" data-mode="replica">
+        <div class="rep-box"><div class="rep-name"></div><div class="log-lines"></div></div>
+        <div class="rep-box"><div class="rep-name"></div><div class="log-lines"></div></div>
+        <div class="rep-box"><div class="rep-name"></div><div class="log-lines"></div></div>
+      </div>
+      <div class="logs nobar" data-mode="central" hidden></div>
+      <p class="mode-text" data-mode="replica">El pedido está en <b>una sola</b> de las tres. Con 30 réplicas, ¿cuál abrís?</p>
+      <p class="mode-text" data-mode="central" hidden>Todas las réplicas y servicios <b>en un solo lugar</b>: el pedido completo de un vistazo.</p>
+    </div>
+  </div>
   <aside class="notes">
-    Una traza sigue un pedido a través de todos los servicios que toca. Pregunta para la clase: ¿cómo sabrían hoy en cuál de cinco servicios se demora un pedido?
+    Con una sola réplica, sus logs alcanzan. Pero Pagos tiene tres, detrás de un balanceador que reparte los pedidos (cada uno le toca a una sola). Cada réplica escribe en su propio archivo.
+    Apretar "Un pedido" en "por réplica": aparece en una sola de las tres cajas, y en ninguna se ve qué hizo Órdenes con él. Pasar a "central": un solo lugar donde llegan los logs de todas las réplicas y de todos los servicios, y el mismo pedido aparece con su historia completa.
+    Texto vs. estructurado: el texto libre es cómodo de leer pero difícil de filtrar ("buscá los timeouts de la réplica 2 de más de un segundo"). En JSON cada dato es un campo con nombre (service, replica, orderId, traceId), y se puede filtrar y agrupar sin expresiones regulares. Notar el traceId: lo vamos a usar en la próxima slide.
+    Pregunta para la clase: si los servidores se reinician o se reemplazan seguido, ¿qué pasa con los logs que guardaban en su disco?
+  </aside>
+</section>
+
+<!-- ============ 8. TRAZAS ============ -->
+<section data-scene="trazas">
+  <div class="kicker orange">Trazas</div>
+  <h2>Seguir un pedido entre servicios</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="hint">👆 Tocá un pedido en viaje</div>
+      <div class="legend"><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento</span><span><i style="background:#f87171"></i>error</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">El pedido lleva un <b>trace id</b> de servicio en servicio, y cada uno anota cuánto tardó: un <b>span</b>.</p>
+      <div class="actions">
+        <button class="btn danger" data-act="break" data-fault="slowdb">💥 DB lenta</button>
+        <button class="btn icon" data-act="heal" title="Arreglar" aria-label="Arreglar">🔧</button>
+        <button class="btn ghost" data-act="slowest">🐢 Última traza lenta</button>
+      </div>
+      <p class="pick-note" aria-live="polite">Mostrando el primer pedido. Tocá otro en el diagrama.</p>
+      <div class="trace"></div>
+      <ul class="points">
+        <li class="fragment">La cascada dice <b>dónde</b> se fue el tiempo: con la DB lenta, casi todo es Pagos.</li>
+        <li class="fragment">Órdenes envuelve a los demás: su span incluye lo que espera a Pagos y a Envíos.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Una traza es el recorrido de un pedido. Órdenes le pone un trace id y lo manda en cada llamada (en un header); cada servicio anota cuándo empezó y terminó su parte (un span) con ese mismo id. Juntando los spans por trace id se arma la cascada.
+    Tocar un punto que viaja: cuando el pedido termina, aparece su cascada. Con todo sano, Pagos tarda unos 300 ms y Envíos casi nada. Romper la DB y apretar "Última traza lenta": la barra de Pagos ocupa casi todo el ancho. Eso las métricas no lo decían tan claro: Órdenes también tenía el p95 alto, pero porque esperaba a Pagos.
+    Puente opcional: en microservicios vimos que un pedido atraviesa varios servicios; la traza es la forma de ver ese recorrido.
+    Pregunta para la clase: si un servicio de la cadena no propaga el trace id, ¿qué ven en la cascada?
+  </aside>
+</section>
+
+<!-- ============ 9. LAS TRES JUNTAS ============ -->
+<section data-scene="tresjuntas">
+  <div class="kicker">Las tres juntas</div>
+  <h2>De la métrica a la traza, de la traza al log</h2>
+  <div class="demo">
+    <div class="stage drill">
+      <svg class="sim" hidden></svg>
+      <nav class="crumbs" aria-label="Recorrido">
+        <button type="button" class="crumb c-m" data-step="metric">📈 Métrica</button><span class="sep">›</span>
+        <button type="button" class="crumb c-t" data-step="trace">🧵 Traza</button><span class="sep">›</span>
+        <button type="button" class="crumb c-l" data-step="logs">📜 Log</button>
+      </nav>
+      <div class="cell c-metric">
+        <div class="label">1 · p95 y errores del checkout</div>
+        <div class="chart-box tj-chart"><canvas class="svc-chart" data-service="checkout" data-fields="p95,errPct"></canvas><i class="moment" hidden></i></div>
+        <div class="tj-hint">👆 Clic en un momento del pico</div>
+      </div>
+      <div class="cell c-traces">
+        <div class="label">2 · Pedidos de ese momento</div>
+        <div class="tj-list"><div class="tj-empty">Elegí un momento en el gráfico.</div></div>
+      </div>
+      <div class="cell c-trace">
+        <div class="label">3 · Su traza: ¿dónde?</div>
+        <div class="tj-empty tj-trace-empty">Elegí un pedido de la lista.</div>
+        <div class="trace" hidden></div>
+      </div>
+      <div class="cell c-logs">
+        <div class="label">4 · Sus logs: ¿qué pasó?</div>
+        <div class="tj-logs"><div class="tj-empty">Clic en el span de Pagos.</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <p class="lead">La misma falla, de punta a punta. Pagos se rompe solo a los pocos segundos.</p>
+      <ol class="tj-steps">
+        <li><b class="m">Métrica</b>: ¿anda mal? Sube el p95 y aparecen errores.</li>
+        <li><b class="t">Traza</b>: ¿dónde? El tiempo se va en Pagos.</li>
+        <li><b class="l">Log</b>: ¿qué pasó? <code>timeout acquiring db connection</code>.</li>
+      </ol>
+      <div class="actions">
+        <button class="btn" data-act="heal">🔧 Arreglar</button>
+        <button class="btn ghost" data-act="reset">↺ Reiniciar</button>
+      </div>
+      <ul class="points">
+        <li class="fragment">Lo que las une es el <b>trace id</b>: está en la traza y en cada renglón de log.</li>
+        <li class="fragment">Ninguna alcanza sola: cada una contesta <b>una</b> de las tres preguntas.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Juntar las tres señales sobre el mismo incidente. Esperar unos segundos: Pagos se rompe solo y en el gráfico sube el p95 y aparecen errores. La métrica contesta "¿anda mal?" y "desde cuándo", pero no por qué.
+    Clic en un momento del pico: aparece la lista de pedidos que empezaron en ese segundo, los más lentos primero. Elegir uno con error: su cascada muestra que casi todo el tiempo fue Pagos (¿dónde?). Clic en el span de Pagos: aparecen sus logs, filtrados por el trace id, y ahí está el timeout pidiendo una conexión a la DB (¿qué pasó?).
+    Las migas de arriba permiten volver un paso y elegir otro momento u otro pedido. Este es el recorrido real de una guardia: un gráfico o una alerta te despierta, una traza te dice dónde mirar y los logs te dicen qué pasó.
+    Pregunta para la clase: ¿qué campo tiene que estar en los logs para poder saltar de una traza a sus logs, y quién lo tiene que poner?
   </aside>
 </section>
 

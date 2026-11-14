@@ -66,7 +66,8 @@
 
   // Crea la ShopSim sobre <svg class="sim"> y conecta los widgets del dashboard que haya en la slide:
   // .sstats (data-service, data-fields, data-window y data-labels opcional: rótulos separados por coma),
-  // canvas.svc-chart (data-service, data-fields), .logs y .trace.
+  // canvas.svc-chart (data-service, data-fields), .logs y .trace. La API de cada logStream/traceView queda en el._w
+  // (p. ej. slide.querySelector('.trace')._w.select(id)); el Chart del gráfico, con Chart.getChart(canvas).
   // Se llama una sola vez por slide (main.js crea la escena al activarla por primera vez), así que cada
   // widget se crea una vez por ShopSim: los widgets no se pueden desconectar. Para cambiar de modo, sim.reset(opts).
   function setupShop(slide, opts) {
@@ -79,8 +80,8 @@
       }
     });
     slide.querySelectorAll('canvas.svc-chart').forEach(cv => Widgets.svcChart(cv, sim));
-    slide.querySelectorAll('.logs').forEach(el => Widgets.logStream(el, sim));
-    slide.querySelectorAll('.trace').forEach(el => Widgets.traceView(el, sim));
+    slide.querySelectorAll('.logs').forEach(el => { el._w = Widgets.logStream(el, sim); });
+    slide.querySelectorAll('.trace').forEach(el => { el._w = Widgets.traceView(el, sim); });
     return sim;
   }
 
@@ -242,6 +243,226 @@
     sim.on('reset', () => { arrivals = []; traffic(); });
     traffic();
     return Object.assign(life(sim), { trafficWindow: TRAFFIC_WIN });
+  };
+
+  /* ---------- 6. logs: qué pasó en este pedido ---------- */
+
+  S.logs = slide => {
+    const sim = setupShop(slide, { rate: 6 });
+    breakButtons(slide, sim);
+    const input = slide.querySelector('.logs input.log-search'), ph = input.placeholder;
+    // Llena el buscador con el pedido del último error de Pagos (o de cualquiera), para no tipear en vivo
+    on(slide, '[data-act=last-error]', () => {
+      const errs = sim.logs.filter(l => l.level === 'error');
+      const e = errs.filter(l => l.service === 'pagos').pop() || errs.pop();
+      input.value = e ? String(e.orderId) : '';
+      input.placeholder = e ? ph : 'Todavía no hay errores: rompé la DB';
+      input.dispatchEvent(new Event('input'));
+    });
+    sim.on('reset', () => { input.placeholder = ph; });
+    return life(sim);
+  };
+
+  /* ---------- 7. logs estructurados y centralizados ---------- */
+
+  // Las cajas «por réplica» son un renderer liviano de la escena (sin barra propia): leen sim.logs filtrados por
+  // servicio Pagos y réplica, con el mismo formato de línea que logStream (Widgets.logLine). El modo «central» es un
+  // logStream común (.logs.nobar: su barra se oculta y el buscador de la escena le copia la búsqueda).
+  const CENTRAL_OPTS = { rate: 6, replicas: 3 };
+  const REP_LINES = 20;
+
+  S.centralizar = slide => {
+    const sim = setupShop(slide, CENTRAL_OPTS);
+    breakButtons(slide, sim);
+    const central = slide.querySelector('.logs.nobar');
+    const centralSearch = central.querySelector('input.log-search');
+    const input = slide.querySelector('input.order-search');
+    const boxes = [...slide.querySelectorAll('.rep-box')];
+    let where = 'replica', fmt = 'text', dirty = true, last = -Infinity;
+
+    const q = () => input.value.replace('#', '').trim();
+    const renderReps = () => {
+      dirty = false;
+      const query = q();
+      boxes.forEach((box, i) => {
+        const st = sim.replicaState(i), lines = box.querySelector('.log-lines');
+        box.querySelector('.rep-name').textContent = st ? `Pagos ${st.id} · su propio archivo` : '';
+        const rows = [];
+        for (let k = sim.logs.length - 1; k >= 0 && rows.length < REP_LINES; k--) {
+          const l = sim.logs[k];
+          if (l.service !== 'pagos' || !st || l.replica !== st.id) continue;
+          if (query && String(l.orderId) !== query) continue;
+          rows.push(l);
+        }
+        const atEnd = lines.scrollTop + lines.clientHeight >= lines.scrollHeight - 4;
+        lines.innerHTML = rows.reverse().map(l => Widgets.logLine(l, fmt)).join('') ||
+          `<div class="log-empty">${query ? 'Acá no está.' : 'Sin líneas todavía.'}</div>`;
+        if (atEnd) lines.scrollTop = lines.scrollHeight;
+      });
+    };
+    const search = () => {
+      centralSearch.value = input.value;
+      centralSearch.dispatchEvent(new Event('input'));
+      renderReps();
+    };
+    input.addEventListener('input', search);
+    seg(slide, 'where', v => { where = v; showMode(slide, v); renderReps(); });
+    seg(slide, 'fmt', v => { fmt = v; central.dataset.format = v; central._w.render(); renderReps(); });
+    // Un pedido reciente que pasó por Pagos (el último error si hay), para no tipear en vivo
+    on(slide, '[data-act=pick-order]', () => {
+      const pl = sim.logs.filter(l => l.service === 'pagos');
+      const e = pl.filter(l => l.level === 'error').pop() || pl[pl.length - 1];
+      input.value = e ? String(e.orderId) : '';
+      search();
+    });
+    sim.on('log', () => { dirty = true; });
+    sim.on('tick', now => { if (dirty && where === 'replica' && now - last >= 0.2) { last = now; renderReps(); } });
+    sim.on('reset', () => { last = -Infinity; renderReps(); });
+    renderReps();
+    return Object.assign(life(sim), { state: () => ({ where, fmt, query: q() }) });
+  };
+
+  /* ---------- 8. trazas: seguir un pedido entre servicios ---------- */
+
+  const SLOW_TRACE = 1; // s: «lenta» para el botón de la última traza lenta (como los puntos amarillos)
+
+  S.trazas = slide => {
+    const sim = setupShop(slide, { rate: 6, clickToTrace: true });
+    breakButtons(slide, sim);
+    const tv = slide.querySelector('.trace')._w;
+    const note = slide.querySelector('.pick-note'), first = note.textContent;
+    let pending = null;
+    const show = (tr, msg) => { tv.select(tr); note.textContent = msg; };
+    // Clic en un punto: si el pedido ya terminó, su traza; si no, se espera a que termine
+    sim.on('pick', id => {
+      const tr = sim.traces.find(t => t.orderId === id);
+      if (tr) { pending = null; show(tr, `Pedido #${id}: tocá otro para comparar.`); return; }
+      pending = id;
+      note.textContent = `Siguiendo el pedido #${id}… la traza aparece cuando termina.`;
+    });
+    sim.on('trace', tr => {
+      if (tr.orderId === pending) { pending = null; show(tr, `Pedido #${tr.orderId}: tocá otro para comparar.`); }
+      else if (!tv.pinned && pending === null) tv.select(tr); // fija el primero: la cascada no cambia sola
+    });
+    on(slide, '[data-act=slowest]', () => {
+      const tr = sim.traces.filter(t => !t.ok || t.dur > SLOW_TRACE).pop();
+      pending = null;
+      if (tr) show(tr, `Última traza lenta: pedido #${tr.orderId}.`);
+      else note.textContent = 'Ninguna traza lenta todavía: rompé la DB.';
+    });
+    sim.on('reset', () => { pending = null; note.textContent = first; });
+    return Object.assign(life(sim), { state: () => ({ orderId: tv.pinned ? tv.pinned.orderId : null, pending }) });
+  };
+
+  /* ---------- 9. las tres juntas: de la métrica a la traza, de la traza al log ---------- */
+
+  // Recorrido por clics: gráfico (clic → momento) → pedidos que empezaron ±TJ_AROUND s de ese momento (los que fallaron
+  // primero y después los más lentos: con la DB lenta, los OK que esperaron conexión tardan más que los timeouts) → su cascada → clic en un span → los logs de ese traceId. Los rings de la ShopSim guardan pocos segundos
+  // (50 trazas, 300 logs) y el gráfico muestra 30 s, así que la escena guarda su propio historial de trazas y logs por
+  // traceId (los últimos TJ_KEEP s), como haría el backend de observabilidad.
+  const TJ_OPTS = { rate: 6 };
+  const TJ_BREAK_AT = 5;  // s: Pagos se rompe solo para que haya un pico en el gráfico
+  const TJ_AROUND = 1, TJ_MAX = 6, TJ_KEEP = 90;
+  const STEPS = ['metric', 'traces', 'trace', 'logs'];
+
+  S.tresjuntas = slide => {
+    const sim = setupShop(slide, TJ_OPTS);
+    sim.drawing = false; // el diagrama de la tienda no se ve en esta slide (svg oculto): no anima puntos
+    const cv = slide.querySelector('canvas.svc-chart'), ch = Chart.getChart(cv);
+    const box = slide.querySelector('.tj-chart'), mark = box.querySelector('.moment');
+    const list = slide.querySelector('.tj-list'), logsEl = slide.querySelector('.tj-logs');
+    const traceEl = slide.querySelector('.c-trace .trace'), traceEmpty = slide.querySelector('.tj-trace-empty');
+    const tv = traceEl._w; // oculto hasta elegir un pedido; después, fijado con select
+    const comma = (x, d = 1) => x.toFixed(d).replace('.', ',');
+    let done = [], logsBy = new Map();
+    let step = 'metric', moment = null, chosen = null, service = null;
+
+    // historial propio
+    sim.on('log', l => { (logsBy.get(l.traceId) || logsBy.set(l.traceId, []).get(l.traceId)).push(l); });
+    sim.on('trace', tr => {
+      done.push(tr);
+      while (done.length && done[0].start < sim.now - TJ_KEEP) logsBy.delete(done.shift().traceId);
+      if (step === 'traces' && Math.abs(tr.start - moment) <= TJ_AROUND) renderList(); // terminó uno de ese momento
+    });
+    const arm = () => sim.after(TJ_BREAK_AT, () => sim.breakPagos('slowdb'));
+
+    const renderList = () => {
+      const rows = done.filter(t => Math.abs(t.start - moment) <= TJ_AROUND).sort((a, b) => a.ok - b.ok || b.dur - a.dur).slice(0, TJ_MAX);
+      list.innerHTML = rows.length
+        ? rows.map(t => `<button type="button" class="tj-row ${t.ok ? (t.dur > SLOW_TRACE ? 'slow' : 'ok') : 'err'}${chosen === t ? ' sel' : ''}" data-trace="${t.traceId}">` +
+            `<b>#${t.orderId}</b><span class="d">${comma(t.dur)} s</span><span class="st">${t.ok ? 'ok' : 'error'}</span></button>`).join('')
+        : '<div class="tj-empty">Ningún pedido de ese momento terminó todavía. Probá un poco antes.</div>';
+    };
+    const renderLogs = () => {
+      const rows = (logsBy.get(chosen.traceId) || []).slice().sort((a, b) => a.t - b.t);
+      logsEl.innerHTML = `<div class="tj-filter">traceId = <b>${chosen.traceId}</b></div><div class="log-lines">` +
+        rows.map(l => Widgets.logLine(l, 'text').replace('class="log-line', `class="log-line${l.service === service ? ' hit' : ''}`)).join('') + '</div>';
+    };
+    const placeMark = () => {
+      const i = moment === null ? -1 : ch.times.reduce((b, t, k) => (t !== null && Math.abs(t - moment) < Math.abs((ch.times[b] ?? Infinity) - moment) ? k : b), -1);
+      const off = i < 0 || Math.abs(ch.times[i] - moment) > 0.6;
+      mark.hidden = off;
+      if (!off) mark.style.left = `${cv.offsetLeft + ch.scales.x.getPixelForValue(i)}px`;
+    };
+    // Pinta la vista según el paso: lo que está después del paso actual queda vacío
+    const paint = () => {
+      const k = STEPS.indexOf(step);
+      slide.querySelector('.c-m').classList.toggle('on', k >= 1);
+      slide.querySelector('.c-t').classList.toggle('on', k >= 2);
+      slide.querySelector('.c-l').classList.toggle('on', k >= 3);
+      slide.querySelectorAll('.crumb').forEach(c => c.classList.toggle('cur', c.dataset.step === (k === 1 ? 'metric' : step)));
+      if (k < 1) list.innerHTML = '<div class="tj-empty">Elegí un momento en el gráfico.</div>';
+      else renderList();
+      traceEl.hidden = k < 2;
+      traceEmpty.hidden = k >= 2;
+      if (k >= 2) tv.select(chosen);
+      if (k < 3) logsEl.innerHTML = `<div class="tj-empty">${k < 2 ? 'Primero elegí un pedido.' : 'Clic en el span de Pagos.'}</div>`;
+      else renderLogs();
+      placeMark();
+    };
+
+    const pickMoment = t => { moment = t; chosen = null; service = null; step = 'traces'; paint(); };
+    const pickTrace = tr => { chosen = tr; service = null; step = 'trace'; paint(); };
+    const pickSpan = svc => { service = svc; step = 'logs'; paint(); };
+
+    ch.options.onClick = e => {
+      const i = Math.round(ch.scales.x.getValueForPixel(e.x));
+      const t = ch.times[Math.max(0, Math.min(ch.times.length - 1, i))];
+      if (t !== null && t !== undefined) pickMoment(t);
+    };
+    ch.update('none');
+    list.addEventListener('click', e => {
+      const b = e.target.closest('.tj-row');
+      const tr = b && done.find(t => t.traceId === b.dataset.trace);
+      if (tr) pickTrace(tr);
+    });
+    traceEl.addEventListener('click', e => {
+      const r = e.target.closest('.t-row');
+      if (r && chosen) pickSpan(r.dataset.service);
+    });
+    on(slide, '.crumb', b => {
+      const want = b.dataset.step;
+      if (want === 'metric') { moment = chosen = service = null; step = 'metric'; }
+      else if (want === 'trace' && chosen) { service = null; step = 'trace'; }
+      else if (want === 'logs' && chosen && service) step = 'logs';
+      paint();
+    });
+    on(slide, '[data-act=heal]', () => sim.heal());
+    on(slide, '[data-act=reset]', () => sim.reset(TJ_OPTS));
+    sim.on('reset', () => {
+      done = []; logsBy = new Map();
+      moment = chosen = service = null; step = 'metric';
+      arm();
+      paint();
+    });
+    let lastMark = -Infinity;
+    sim.on('tick', now => { if (moment !== null && now - lastMark >= 0.5) { lastMark = now; placeMark(); } });
+    arm();
+    paint();
+    return Object.assign(life(sim), {
+      pickMoment,
+      state: () => ({ step, moment, traceId: chosen ? chosen.traceId : null, service })
+    });
   };
 
   window.Scenes = S;

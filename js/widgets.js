@@ -257,10 +257,13 @@
         scales
       }
     });
+    // ch.times[i] = instante de simulación del punto i (para saber qué momento se clickeó)
+    ch.times = blank();
     throttle(sim, 0.5, isReset => {
-      if (isReset) { ch.data.datasets.forEach(d => { d.data = blank(); }); ch.update('none'); return; }
+      if (isReset) { ch.data.datasets.forEach(d => { d.data = blank(); }); ch.times = blank(); ch.update('none'); return; }
       const w = sim.window(3, svc);
       ch.data.datasets.forEach((d, i) => { d.data.push(SERIES[fields[i]].val(w)); d.data.shift(); });
+      ch.times.push(sim.now); ch.times.shift();
       ch.update('none');
     });
     return ch;
@@ -274,6 +277,17 @@
     return `${pad2(Math.floor(d / 3600))}:${pad2(Math.floor(d / 60) % 60)}:${pad2(s)}.${Math.round((d - Math.floor(d)) * 10)}`;
   };
 
+  // Una línea de log en HTML, en texto o JSON (data-trace lleva el traceId). La usan logStream y las escenas.
+  function logLine(l, format) {
+    const lv = l.level, tr = `data-trace="${esc(l.traceId)}"`;
+    if (format === 'json') {
+      return `<div class="log-line lv-${lv}" ${tr}>${esc(JSON.stringify({ t: +l.t.toFixed(1), level: lv, service: l.service, replica: l.replica, msg: l.msg, orderId: l.orderId, traceId: l.traceId }))}</div>`;
+    }
+    return `<div class="log-line lv-${lv}" ${tr}><span class="l-t">${clock(l.t)}</span> <span class="l-lv">${lv.toUpperCase().padEnd(5)}</span> ` +
+      `<span class="l-svc">${esc(l.service)}#${l.replica}</span> <span class="l-msg">${esc(l.msg)}</span> ` +
+      `<span class="l-ord">order=#${l.orderId}</span> <span class="l-trace">trace=${esc(l.traceId)}</span></div>`;
+  }
+
   function logStream(el, sim) {
     el.innerHTML =
       '<div class="log-bar">' +
@@ -286,15 +300,7 @@
     const btns = [...el.querySelectorAll('[data-level]')];
     let level = 'all', dirty = true;
 
-    const line = l => {
-      const lv = l.level;
-      if ((el.dataset.format || 'text') === 'json') {
-        return `<div class="log-line lv-${lv}">${esc(JSON.stringify({ t: +l.t.toFixed(1), level: lv, service: l.service, replica: l.replica, msg: l.msg, orderId: l.orderId, traceId: l.traceId }))}</div>`;
-      }
-      return `<div class="log-line lv-${lv}"><span class="l-t">${clock(l.t)}</span> <span class="l-lv">${lv.toUpperCase().padEnd(5)}</span> ` +
-        `<span class="l-svc">${esc(l.service)}#${l.replica}</span> <span class="l-msg">${esc(l.msg)}</span> ` +
-        `<span class="l-ord">order=#${l.orderId}</span> <span class="l-trace">trace=${esc(l.traceId)}</span></div>`;
-    };
+    const line = l => logLine(l, el.dataset.format || 'text');
     const render = () => {
       dirty = false;
       const q = input.value.replace('#', '').trim();
@@ -302,7 +308,7 @@
       for (let i = sim.logs.length - 1; i >= 0 && rows.length < LOG_LINES; i--) {
         const l = sim.logs[i];
         if (level !== 'all' && l.level !== level) continue;
-        if (q && !String(l.orderId).includes(q)) continue;
+        if (q && String(l.orderId) !== q) continue; // el pedido exacto: «1001» no trae el #10012
         rows.push(l);
       }
       const atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
@@ -327,17 +333,21 @@
   }
 
   // Cascada de una traza: una barra por span, el span más largo (sin contar el de Órdenes, que envuelve a todos) resaltado.
+  // Sin fijar sigue la última traza. select(traceId | traza) fija una: se guarda el objeto, así que sigue aunque el ring
+  // de 50 la descarte; un id que ya no está (o null) vuelve a seguir la última, y un reset la suelta.
   function traceView(el, sim, traceId) {
-    let pinned = traceId || null, shown = null, dirty = true;
+    let pinned = null, shown = null, dirty = true;
     const find = id => sim.traces.find(t => t.traceId === id) || null;
+    const pin = x => { pinned = x && typeof x === 'object' ? x : (x ? find(x) : null); };
+    pin(traceId);
     const render = () => {
       dirty = false;
-      const tr = pinned ? find(pinned) : sim.traces[sim.traces.length - 1];
+      const tr = pinned || sim.traces[sim.traces.length - 1];
       shown = tr ? tr.traceId : null;
       if (!tr) { el.innerHTML = '<div class="tr-empty">Todavía no hay trazas.</div>'; return; }
       const t0 = Math.min(...tr.spans.map(s => s.start));
       const total = Math.max(...tr.spans.map(s => s.end)) - t0 || 1e-6;
-      const kids = tr.spans.slice(1);
+      const kids = tr.spans.filter(s => s.service !== 'ordenes');
       const pool = kids.length ? kids : tr.spans;
       const longest = pool.reduce((a, b) => (b.end - b.start > a.end - a.start ? b : a));
       el.innerHTML =
@@ -356,15 +366,16 @@
     };
     sim.on('trace', () => { if (!pinned) dirty = true; });
     sim.on('tick', () => { if (dirty) render(); });
-    sim.on('reset', () => { pinned = traceId ? pinned : null; render(); });
+    sim.on('reset', () => { pinned = null; render(); });
     render();
     return {
       render,
-      select(id) { pinned = id || null; render(); },
-      get current() { return shown; }
+      select(x) { pin(x); render(); },
+      get current() { return shown; },
+      get pinned() { return pinned; }
     };
   }
 
-  window.Widgets = { stats, chart, histogram, strip, fmtLat, svcStats, svcChart, logStream, traceView };
+  window.Widgets = { stats, chart, histogram, strip, fmtLat, svcStats, svcChart, logStream, logLine, traceView };
 
 })();

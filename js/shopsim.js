@@ -4,6 +4,7 @@
    el pedido espera; si espera más de `poolWait`, falla con «timeout acquiring db connection» (503).
    El incidente recurrente: la DB se pone lenta, el pool se llena, primero sube la latencia y después los errores.
    La tienda emite las tres señales: métricas (`window`), logs (`logs`) y trazas (`traces`).
+   Con clickToTrace, los puntos se pueden clickear (llevan data-order) y el clic emite 'pick' (orderId).
 
    La lógica es una simulación de eventos discretos con su propia cola: cada evento corre en su instante
    exacto, sin importar el tamaño del tick ni la velocidad, así que tiempo real y `fastForward` dan los
@@ -671,7 +672,8 @@
       const el = svgEl('circle', { r, fill: color, class: 'pk' + (ord.id === this.picked ? ' picked' : '') }, this.gPk);
       if (this.o.clickToTrace && r > 4) {
         el.classList.add('pick');
-        el.addEventListener('click', () => { this.picked = ord.id; el.classList.add('picked'); });
+        el.dataset.order = ord.id;
+        el.addEventListener('click', () => { this.picked = ord.id; el.classList.add('picked'); this.emit('pick', ord.id); });
       }
       const an = this.clock.animate(dur, p => {
         const P = cubic(edge(a, b, this.v), edge(b, a, this.v), p, this.v);
