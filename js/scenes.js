@@ -613,7 +613,7 @@
   /* ---------- 11. avisar por síntoma, no por causa ---------- */
 
   // Una noche de 8 h (un punto por minuto), comprimida a SIN_HOUR s de simulación por hora. Las causas se mueven solas
-  // sin que nadie sufra: el job de reportes (02:00) y un backup (05:30) suben la CPU; la caché se llena a las 03:00 y a
+  // sin que nadie sufra: el job de reportes (02:00) y un backup (07:10) suben la CPU; la caché se llena a las 03:00 y a
   // las 06:20; el supervisor reinicia una réplica a la 01:10 y a las 04:40 (las otras dos atienden). Con incidente, a
   // las 05:00 Pagos se queda sin conexiones a la DB: suben los errores del checkout, la CPU no se entera.
   // El rng se consume igual en las dos noches: lo único que cambia es el incidente.
@@ -630,7 +630,7 @@
     for (let m = 0; m < NIGHT_MIN; m++) {
       let c = 24 + 10 * r();
       if (m >= 120 && m < 146) c = 90 + 6 * r();
-      if (m >= 330 && m < 344) c = 87 + 5 * r();
+      if (m >= 430 && m < 444) c = 87 + 5 * r();
       let me = 62 + 18 * Math.min(1, m / 180) + 3 * r();
       if (m >= 180 && m < 232) me = 87 + 3 * r();
       else if (m >= 380 && m < 418) me = 87 + 4 * r();
@@ -759,7 +759,7 @@
       state: () => {
         const fired = count();
         const total = SIN_ALERTS.reduce((s, a) => s + (enabled[a.k] ? fired[a.k] : 0), 0);
-        return { night, minute, enabled: Object.assign({}, enabled), fired, total };
+        return { night, minute, enabled: Object.assign({}, enabled), fired, total, firings: nights[night].firings };
       }
     };
   };
@@ -878,9 +878,11 @@
       curve.setAttribute('points', pts(b.curve, X, Y));
       now.setAttribute('x1', X(hour)); now.setAttribute('x2', X(hour));
       burnTxt.textContent = `Velocidad de consumo (últimas ${SLO_SHORT} h): ${comma(burn, burn < 10 ? 2 : 1)}×`;
-      lastsTxt.textContent = burn < 0.05 ? 'a este ritmo, el presupuesto casi no se gasta'
-        : SLO_DAYS / burn > 60 ? 'a este ritmo, el presupuesto alcanza de sobra'
-        : `a este ritmo, el presupuesto del mes dura ${SLO_DAYS / burn >= 2 ? `${Math.round(SLO_DAYS / burn)} días` : `${Math.max(1, Math.round(SLO_DAYS * 24 / burn))} h`}`;
+      // lo que queda (no un presupuesto entero) dividido la velocidad: a 1× un presupuesto entero dura SLO_DAYS
+      const left = rem / 100 * SLO_DAYS / Math.max(burn, 1e-9);
+      lastsTxt.textContent = rem <= 0 ? 'el presupuesto ya se agotó: cada falla nueva es fuera del objetivo'
+        : burn < 0.05 || left > 60 ? 'a este ritmo, lo que queda alcanza de sobra'
+        : `a este ritmo, lo que queda dura ${left >= 2 ? `${Math.round(left)} días` : `${Math.max(1, Math.round(left * 24))} h`}`;
       gUi.classList.toggle('alerting', firing);
       pill.setAttribute('class', `pill ${firing ? 'firing' : 'ok'}`);
       pillTxt.textContent = firing ? `🔔 Consumo rápido (> ${SLO_BURN}×)` : `✓ Sin alerta (avisa con > ${SLO_BURN}×)`;

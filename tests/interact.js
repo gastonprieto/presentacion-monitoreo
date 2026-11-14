@@ -1126,6 +1126,8 @@ test('escena sintoma: las de causa hacen ruido', async page => {
   check(r.calm.total === f.cpu + f.mem + f.rep, `total ${r.calm.total} vs ${JSON.stringify(f)}`);
   check(r.start.total === 0, `la noche nueva no arranca en cero: ${r.start.total}`);
   check(r.inc.fired.sym >= 1, `con incidente, síntoma: ${JSON.stringify(r.inc.fired)}`);
+  const during = ['cpu', 'mem', 'rep'].flatMap(k => r.inc.firings[k].filter(f => f[0] <= 342 && 300 <= f[1]).map(f => `${k} ${f}`));
+  check(!during.length, `una alerta de causa suena durante el incidente (05:00–05:42): ${during}`);
   check(r.symOnly.total === r.inc.fired.sym && r.shown === r.symOnly.total, `sólo síntoma: ${JSON.stringify(r.symOnly)} (muestra ${r.shown})`);
 });
 
@@ -1144,8 +1146,29 @@ test('escena slo: romper acelera el consumo', async page => {
       sc.ff(25);
       return { sano, roto, end: sc.state() };
     };
-    return { s999: run('99.9'), s99: run('99'), s995: run('99.5') };
+    // texto «a este ritmo…»: lo que queda del presupuesto, no un presupuesto entero
+    const lasts = () => ({ st: sc.state(), text: sec.querySelector('svg.sim .lasts-txt').textContent });
+    sec.querySelector('.seg[data-group=slo] [data-v="99"]').click();
+    sec.querySelector('[data-act=reset]').click();
+    sc.ff(8);
+    sec.querySelector('[data-act=break]').click();
+    sc.ff(3);
+    const mid = lasts();
+    sc.ff(10);
+    const out = lasts();
+    sec.querySelector('[data-act=heal]').click();
+    sc.ff(4);
+    const healed = lasts();
+    return { s999: run('99.9'), s99: run('99'), s995: run('99.5'), mid, out, healed };
   });
+  const m = r.mid.st, want = m.remainingPct / 100 * 30 / m.burnRate;
+  check(m.remainingPct > 0 && m.burnRate > 1, `a mitad del incidente: ${JSON.stringify(m)}`);
+  const mt = r.mid.text.match(/dura (?:unos? )?(\d+) (días|h)/);
+  check(mt, `texto: ${r.mid.text}`);
+  const shown = mt[2] === 'h' ? +mt[1] / 24 : +mt[1];
+  check(Math.abs(shown - want) <= Math.max(0.6, want * 0.1), `muestra ${r.mid.text}, queda ${m.remainingPct}% a ${m.burnRate}× → ${want.toFixed(2)} días`);
+  check(r.out.st.remainingPct <= 0 && r.out.text.includes('ya se agotó'), `agotado: ${r.out.text} (${r.out.st.remainingPct})`);
+  check(r.healed.st.remainingPct <= 0 && r.healed.text.includes('ya se agotó'), `agotado y arreglado: ${r.healed.text}`);
   for (const k of ['s99', 's995', 's999']) {
     const x = r[k];
     check(x.sano.burnRate > 0, `${k}: el sano no consume nada (${x.sano.burnRate})`);

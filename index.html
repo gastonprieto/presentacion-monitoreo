@@ -450,7 +450,7 @@
     </div>
   </div>
   <aside class="notes">
-    Cuatro alertas típicas: tres por causa (CPU, memoria, una réplica caída) y una por síntoma (errores del checkout, lo que vive el usuario). Correr la noche tranquila: el job de reportes de las 2 sube la CPU, la caché se llena a las 3, el supervisor reinicia una réplica a la 1 y a las 4. Seis veces despierto y ningún usuario se enteró. La de síntoma, en cero.
+    Cuatro alertas típicas: tres por causa (CPU, memoria, una réplica caída) y una por síntoma (errores del checkout, lo que vive el usuario). Correr la noche tranquila: el job de reportes de las 2 y el backup de las 7 suben la CPU, la caché se llena a las 3, el supervisor reinicia una réplica a la 1 y a las 4. Seis veces despierto y ningún usuario se enteró. La de síntoma, en cero.
     Pasar a "con incidente": a las 5 Pagos se queda sin conexiones a la DB. Suena la de síntoma. ¿Y la de CPU? No se enteró: los pedidos esperan una conexión, la CPU no sube.
     Apagar las tres de causa: la noche tranquila queda en cero y la del incidente sigue sonando. Eso es fatiga de alertas: si suena seis veces por nada, a la séptima nadie se levanta. Las métricas de causa siguen sirviendo, pero en el dashboard, para investigar, no para despertar a alguien.
     Pregunta para la clase: de las alertas que tienen hoy en su trabajo, ¿cuántas son por causa?
@@ -488,9 +488,9 @@
   </div>
   <aside class="notes">
     Un SLO es un objetivo medible: "99,5% de los checkouts OK en los últimos 30 días". Nadie promete 100%: lo que falta es el presupuesto de error, y se puede gastar (en un deploy riesgoso, en un experimento). Acá un mes dura 30 segundos de simulación; en la tienda sana fallan unos pocos checkouts y el presupuesto se gasta poco y parejo.
-    Romper Pagos: la velocidad de consumo (burn rate, cuántas veces más rápido que lo permitido se gasta, medido en las últimas 48 h) se dispara y suena la alerta por consumo, que acá suena con más de 2× (a ese ritmo, el presupuesto del mes dura 15 días). Arreglar: la velocidad vuelve a casi cero, pero la barra queda donde quedó: esas fallas cuentan hasta que salgan de la ventana de 30 días.
+    Romper Pagos: la velocidad de consumo (burn rate, cuántas veces más rápido que lo permitido se gasta, medido en las últimas 48 h) se dispara y suena la alerta por consumo, que acá suena con más de 2× (a ese ritmo, un presupuesto entero dura 15 días; el texto de abajo dice cuánto dura lo que queda). Arreglar: la velocidad vuelve a casi cero, pero la barra queda donde quedó: esas fallas cuentan hasta que salgan de la ventana de 30 días. Ojo: la alerta sigue sonando hasta unos 2 días simulados después de arreglar, porque la velocidad es el promedio de las últimas 48 h.
     Cambiar el objetivo sobre el mismo mes: con 99,9% el mismo incidente agota el presupuesto en horas; con 99% aguanta días. Un objetivo más alto cuesta más caro: menos margen para fallar y para cambiar cosas.
-    Puente: ésta es una alerta por síntoma (checkouts que fallan) con una ventana que se adapta al objetivo.
+    Puente: ésta es una alerta por síntoma (checkouts que fallan) cuyo umbral escala con el objetivo: la misma tasa de fallas es 3× con 99% y 30× con 99,9%.
     Pregunta para la clase: ¿qué objetivo le pondrían al checkout de la tienda, y cuál a la página de "quiénes somos"?
   </aside>
 </section>
