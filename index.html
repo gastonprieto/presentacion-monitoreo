@@ -44,7 +44,7 @@
   <div class="demo">
     <div class="stage">
       <svg class="sim"></svg>
-      <div class="complaint" hidden role="status"><span class="who">👤 un usuario</span>¿Se cayó la tienda? Hace 5 minutos que no puedo pagar 😤</div>
+      <div class="complaint" hidden role="status"><span class="who">👤 un usuario</span>¿Se cayó la tienda? No puedo pagar 😤</div>
       <div class="legend"><span><i style="background:#7dd3fc"></i>pedido</span><span><i style="background:#4ade80"></i>ok</span><span><i style="background:#facc15"></i>lento</span><span><i style="background:#f87171"></i>error</span></div>
     </div>
     <div class="panel">
@@ -382,7 +382,7 @@
   </div>
   <aside class="notes">
     Juntar las tres señales sobre el mismo incidente. Esperar unos segundos: Pagos se rompe solo y en el gráfico sube el p95 y aparecen errores. La métrica contesta "¿anda mal?" y "desde cuándo", pero no por qué.
-    Clic en un momento del pico: aparece la lista de pedidos que empezaron en ese segundo, los más lentos primero. Elegir uno con error: su cascada muestra que casi todo el tiempo fue Pagos (¿dónde?). Clic en el span de Pagos: aparecen sus logs, filtrados por el trace id, y ahí está el timeout pidiendo una conexión a la DB (¿qué pasó?).
+    Clic en un momento del pico: aparece la lista de pedidos que empezaron en ese segundo, primero los que fallaron y después los más lentos. Elegir uno con error: su cascada muestra que casi todo el tiempo fue Pagos (¿dónde?). Clic en el span de Pagos: aparecen sus logs, filtrados por el trace id, y ahí está el timeout pidiendo una conexión a la DB (¿qué pasó?).
     Las migas de arriba permiten volver un paso y elegir otro momento u otro pedido. Este es el recorrido real de una guardia: un gráfico o una alerta te despierta, una traza te dice dónde mirar y los logs te dicen qué pasó.
     Pregunta para la clase: ¿qué campo tiene que estar en los logs para poder saltar de una traza a sus logs, y quién lo tiene que poner?
   </aside>
@@ -416,7 +416,7 @@
     </div>
   </div>
   <aside class="notes">
-    Una alerta es una regla: un valor, un umbral y una ventana. "Más de 4% de errores durante 3 minutos seguidos". La serie es una hora de errores del checkout, un punto por minuto: ruido de fondo, cuatro picos cortos (de 1, 2 y 3 minutos) y un incidente real de 11 minutos, sombreado en rojo.
+    Una alerta es una regla: un valor, un umbral y una ventana. "Más de 4% de errores durante 3 minutos seguidos". Los 3 minutos se cuentan desde la primera muestra mala: con un punto por minuto, un pico de 3 puntos malos sólo cubre 2 minutos y no dispara la alerta; hacen falta 4 puntos seguidos. La serie es una hora de errores del checkout, un punto por minuto: ruido de fondo, cuatro picos cortos (de 1, 2 y 3 minutos) y un incidente real de 11 minutos, sombreado en rojo.
     Arrancar con lo sugerido: atrapa el incidente, cero falsas alarmas, con 3 minutos de demora. Bajar el umbral a 1%: el ruido de fondo dispara falsas alarmas (ámbar). Subirlo a 10%: no suena nunca y el incidente se escapa (rojo hueco). Volver a 4% y poner "apenas pase": cada pico es una alarma. Con 5 minutos, ninguna falsa pero avisa 5 minutos tarde.
     No hay un valor perfecto: es un compromiso entre despertar a alguien por nada y enterarse tarde. El cursor muestra la regla en vivo: pendiente mientras cuenta los minutos, sonando cuando se cumplen.
     Pregunta para la clase: si cada falsa alarma despierta a alguien a las 3 de la mañana, ¿cuántas toleran antes de silenciar la alerta?
@@ -443,7 +443,7 @@
       </div>
       <div class="hstats"></div>
       <div class="pager"><span class="face">😴</span><span class="pages"></span></div>
-      <div class="actions"><button class="btn ghost" data-act="reset">↺ Otra noche</button></div>
+      <div class="actions"><button class="btn ghost" data-act="reset">↺ De nuevo</button></div>
       <ul class="points">
         <li class="fragment">Las de <b>causa</b> suenan sin que nadie sufra. La de <b>síntoma</b>, sólo cuando el usuario sufre.</li>
       </ul>
@@ -478,7 +478,7 @@
       <div class="actions">
         <button class="btn danger" data-act="break">💥 Romper Pagos</button>
         <button class="btn" data-act="heal">🔧 Arreglar</button>
-        <button class="btn ghost" data-act="reset">↺ Otro mes</button>
+        <button class="btn ghost" data-act="reset">↺ De nuevo</button>
       </div>
       <div class="hstats"></div>
       <ul class="points">
@@ -527,7 +527,7 @@
     Hasta acá mirábamos el sistema y una persona decidía. Ahora el sistema reacciona solo. Lo más básico: preguntarle a cada réplica, cada segundo, si está bien. Pero hay dos preguntas distintas. ¿Está vivo? (si el proceso no contesta, reiniciarlo). ¿Está listo? (si todavía arranca, calienta o está trabado, no mandarle pedidos, sin reiniciarlo). En la jerga se llaman liveness y readiness. Debajo de cada réplica se ve lo que contestaría a cada pregunta.
     Con "¿vivo?" apretar "Colgar Pagos 1": el proceso sigue ahí pero no contesta. A los 2 segundos 🤖 lo reinicia. Pero mientras arranca y calienta (5 s) los pedidos le siguen llegando y fallan. Con "¿listo?": la réplica colgada sale de la rotación y la otra atiende todo; nadie la reinicia, queda colgada hasta que alguien la arregle (🔧). Con "las dos": se reinicia y no recibe pedidos hasta estar lista. Casi ningún error.
     "Deploy lento": se reinicia Pagos 2 con una versión que tarda 5 s en estar lista. Con sólo "¿vivo?" responde (está vivo), así que recibe pedidos y devuelve 503. Con "¿listo?" sale de la rotación hasta que termine.
-    Ojo: una sonda de vivo demasiado estricta (por ejemplo, que también mire la base de datos) reinicia réplicas sanas cuando el problema es otro. Lo vamos a ver en la última slide de esta parte.
+    Ojo: una sonda de vivo demasiado estricta (por ejemplo, que también mire la base de datos) reinicia réplicas sanas cuando el problema es otro. Algo parecido vamos a ver en la última slide de esta parte: una reacción automática que, con el problema en otro lado, no ayuda.
     Pregunta para la clase: si la base de datos se pone lenta, ¿debería fallar la pregunta "¿vivo?" de Pagos, la de "¿listo?" o ninguna?
   </aside>
 </section>
@@ -565,7 +565,7 @@
   </div>
   <aside class="notes">
     El supervisor es el proceso que vigila a otro proceso: si se cae, lo vuelve a arrancar. La política dice cuándo: nunca, sólo si terminó con error, o siempre.
-    "Una caída": Pagos se cae por algo raro (se quedó sin memoria, un pedido con datos raros). Con "si falla", 🤖 lo vuelve a arrancar a 1 s y sigue andando. El usuario casi ni se entera. Con "no reiniciar" queda caído hasta que alguien apriete 🔧.
+    "Una caída": Pagos se cae por algo raro (se quedó sin memoria, un pedido con datos raros). Con "si falla", 🤖 lo vuelve a arrancar a 1 s y sigue andando. El usuario casi ni se entera. Con "no reiniciar" queda caído hasta que alguien apriete 🔧. Ojo: acá toda caída es con error, así que "si falla" y "siempre" se ven igual; la diferencia aparece cuando el proceso termina bien (un job que acaba y no debería volver a arrancar, por ejemplo).
     "Bug al arrancar": la versión nueva falla apenas arranca (falta una variable de configuración, por ejemplo). Reiniciar no sirve: se cae de nuevo. El supervisor espera 1 s, 2 s, 4 s, 8 s, 16 s: cada vez el doble, hasta un tope. A eso se le dice crash loop con backoff. Mirar la línea de tiempo: las barras crecen. Si estuvo sano 10 s seguidos, la espera vuelve a 1 s.
     El supervisor reacciona, pero no arregla: un reinicio esconde el problema si nadie mira cuántas veces reinició. Esa cuenta es una métrica que vale la pena alertar.
     Pregunta para la clase: ¿por qué no reiniciar enseguida, sin esperar? ¿A quién le hace daño un proceso que arranca y se cae cien veces por minuto?
@@ -597,7 +597,7 @@
     </div>
   </div>
   <aside class="notes">
-    Un pico sano: más usuarios, nada roto. El autoscaler mira una métrica (acá, el uso del pool de conexiones de cada réplica de Pagos, promedio de los últimos 5 s) y la compara con un umbral: si está por encima, suma réplicas; si sobra, saca. Siempre entre un mínimo y un máximo.
+    Un pico sano: más usuarios, nada roto. El autoscaler mira una métrica (acá, el uso del pool de conexiones de cada réplica de Pagos, promedio de los últimos 5 s) y la compara con un umbral: si está por encima, suma réplicas; si sobra, saca. Siempre entre un mínimo y un máximo. Las réplicas nuevas no reciben pedidos hasta estar listas (la pregunta "¿listo?" de la slide 13): por eso suman capacidad con demora.
     Subir el tráfico a 18: el pool se llena, 🤖 suma réplicas, pero cada una tarda 3 s en estar lista (aparece "calentando"). En el gráfico se ve la demora entre la carga y las réplicas. Bajar el tráfico: tarda en sacarlas, por el enfriamiento.
     El enfriamiento es cuánto espera entre un cambio y el siguiente, y cuánto tiempo seguido tiene que sobrar capacidad antes de sacar una réplica. Ponerlo en 0 y el umbral en 30%: suma réplicas antes de que las anteriores estén listas, después le sobran, saca, le faltan... Oscila. Cada réplica que arranca y se va cuesta (conexiones nuevas, cachés frías).
     Escalar ayuda cuando el cuello de botella es Pagos. Si el cuello de botella es algo compartido, como la base de datos, no ayuda: lo vemos en dos slides.
@@ -612,7 +612,7 @@
   <div class="demo">
     <div class="stage">
       <svg class="sim"></svg>
-      <div class="legend"><span><i style="background:#4ade80"></i>cerrado</span><span><i style="background:#f87171"></i>abierto</span><span><i style="background:#facc15"></i>medio abierto</span></div>
+      <div class="legend mode-text" data-mode="breaker" hidden><span><i style="background:#4ade80"></i>cerrado</span><span><i style="background:#f87171"></i>abierto</span><span><i style="background:#facc15"></i>medio abierto</span></div>
     </div>
     <div class="panel">
       <p class="lead">Pagos se cuelga. ¿Cuánto espera <b>Órdenes</b> antes de rendirse?</p>
@@ -679,13 +679,40 @@
   </aside>
 </section>
 
-<!-- ============ CIERRE ============ -->
+<!-- ============ 18. HERRAMIENTAS ============ -->
 <section>
-  <div class="kicker">Cierre</div>
-  <h2>Lo que nos llevamos</h2>
-  <p class="lead">Slide en construcción.</p>
+  <div class="kicker">Ejemplos</div>
+  <h2>Herramientas reales</h2>
+  <div class="summary tools">
+    <div class="card fragment"><div class="ico">📊</div><h4>Métricas</h4><p><b>Prometheus</b> las recolecta y guarda; <b>Grafana</b> las dibuja en dashboards.</p></div>
+    <div class="card fragment"><div class="ico">📜</div><h4>Logs</h4><p><b>Loki</b> o el stack <b>ELK</b> (Elasticsearch, Logstash, Kibana) los juntan en un solo lugar para buscarlos.</p></div>
+    <div class="card fragment"><div class="ico">🧵</div><h4>Trazas</h4><p><b>OpenTelemetry</b> instrumenta métricas, logs y trazas; <b>Jaeger</b> o <b>Tempo</b> guardan y muestran las trazas.</p></div>
+    <div class="card fragment"><div class="ico">🔔</div><h4>Alertas</h4><p><b>Alertmanager</b> agrupa y enruta los avisos; <b>PagerDuty</b> llama a quien está de guardia.</p></div>
+    <div class="card fragment"><div class="ico">🤖</div><h4>Reacción</h4><p>Sondas <i>liveness</i> y <i>readiness</i> y <b>HPA</b> en Kubernetes; <code>restart</code> en Docker; <b>systemd</b> o <b>supervisord</b> en un servidor.</p></div>
+    <div class="card fragment"><div class="ico">🧪</div><h4>Laboratorio</h4><p>En el repo hay un laboratorio con Docker para probarlo con piezas reales. Está en el README.</p></div>
+  </div>
   <aside class="notes">
-    Repaso de las cuatro herramientas y de cómo se combinan. Pregunta para la clase: ¿qué es lo primero que van a medir en su sistema esta semana?
+    Recién ahora los nombres: todo lo que vimos son ideas que cada herramienta implementa a su manera. Métricas: Prometheus las recolecta cada pocos segundos y Grafana las muestra. Logs: Loki o ELK los centralizan. Trazas: OpenTelemetry es el estándar para instrumentar (sirve para las tres señales) y Jaeger o Tempo guardan las trazas. Alertas: Alertmanager decide a quién y cuándo avisar, y PagerDuty es la guardia. Reacción: en Kubernetes las sondas liveness y readiness y el HPA (autoscaler horizontal); en Docker, la política de restart; en un servidor, systemd o supervisord.
+    En el repo hay un laboratorio con Docker para probarlo con piezas reales; los pasos están en el README.
+    Pregunta para la clase: ¿cuáles de estas piezas ya usa el sistema en el que trabajan, y cuál de las tres señales es la que más les falta?
+  </aside>
+</section>
+
+<!-- ============ 19. CIERRE ============ -->
+<section>
+  <div class="kicker">Resumen</div>
+  <h2>Lo que nos llevamos</h2>
+  <div class="summary">
+    <div class="card good fragment"><div class="ico">🔍</div><h4>Tres señales, tres preguntas</h4><p>Métricas dicen <i>si</i> anda mal, trazas <i>dónde</i> y logs <i>qué pasó</i>: la misma falla, vista tres veces.</p></div>
+    <div class="card good fragment"><div class="ico">📈</div><h4>Percentiles, no promedio</h4><p>El promedio esconde a los que esperan mucho: mirá p95 y p99.</p></div>
+    <div class="card good fragment"><div class="ico">🎯</div><h4>Alertar por síntomas</h4><p>Con ventana, para no sonar por cada pico. Las causas (CPU, memoria) se miran, no despiertan a nadie.</p></div>
+    <div class="card good fragment"><div class="ico">⚖️</div><h4>El SLO decide cuánto fallar</h4><p>El presupuesto de error dice cuánto se puede gastar y cuándo hay que frenar.</p></div>
+    <div class="card good fragment"><div class="ico">🤖</div><h4>Reaccionar solo</h4><p>Health checks, supervisor y autoscaler resuelven lo conocido sin esperar a una persona.</p></div>
+    <div class="card bad fragment"><div class="ico">⚠️</div><h4>Lo automático tiene límites</h4><p>Reiniciar esconde, escalar un cuello compartido empeora y los reintentos multiplican la carga.</p></div>
+  </div>
+  <aside class="notes">
+    Repasar cada tarjeta conectándola con su demo: la tienda que se rompía sin que nadie avisara, los percentiles, la alerta con ventana y por síntoma, el presupuesto de error, las tres reacciones y por último el incidente del pool, donde la automatización compra tiempo pero no encuentra la causa.
+    Pregunta para la clase: ¿qué es lo primero que van a medir o a alertar en su sistema esta semana?
   </aside>
 </section>
 
@@ -700,8 +727,9 @@
     </figure>
     <div class="cta">
       <h3>🧪 Animate a probar tu propia arquitectura</h3>
-      <p>En el <b>Architecture Playground</b> armás un sistema con las piezas que vimos (clientes, servicios, load balancers, proxies, cachés, colas, brokers) y lo ponés bajo carga.</p>
+      <p>En el <b>Architecture Playground</b> armás un sistema con las piezas de la serie y lo ponés bajo carga.</p>
       <p>Arrancá por el preset <b>load-balancer</b>: apagá una réplica y mirá qué pasa.</p>
+      <p>En el repo hay un laboratorio con Docker para probarlo con piezas reales.</p>
       <a class="btn primary" href="https://gastonprieto.github.io/architecture-playground/" target="_blank" rel="noopener">Abrir el playground →</a>
       <br><a class="repo-link with-text" href="https://github.com/gastonprieto/presentacion-monitoreo" target="_blank" rel="noopener" title="Código en GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>github.com/gastonprieto/presentacion-monitoreo</span></a>
     </div>

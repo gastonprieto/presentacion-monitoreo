@@ -865,7 +865,7 @@
     const pct = v => `${comma(v, Math.abs(v) < 10 && v % 1 ? 1 : 0)}%`;
     const draw = () => {
       const b = B[obj], rem = b.m.remainingPct, burn = b.s.burnRate, firing = b.st === 'firing';
-      dayTxt.textContent = hour >= H_END ? `Día 30 de 30 · fin del mes` : `Día ${Math.floor(hour / 24) + 1} de ${SLO_DAYS}`;
+      dayTxt.textContent = hour >= H_END ? `Día ${SLO_DAYS} de ${SLO_DAYS} · fin del mes` : `Día ${Math.floor(hour / 24)} de ${SLO_DAYS}`;
       objTxt.textContent = `objetivo ${comma(+obj, obj.includes('.') ? 1 : 0)}%${broken ? ' · 💥 Pagos roto' : ''}`;
       barFill.setAttribute('width', barW * Math.max(0, rem) / 100);
       barFill.setAttribute('class', `bud-fill ${rem > 50 ? 'ok' : rem > 0 ? 'warn' : 'out'}`);

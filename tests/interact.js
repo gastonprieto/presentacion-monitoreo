@@ -57,15 +57,46 @@ test('notas: todas las slides tienen pregunta', async page => {
   check(!r.filter(x => x !== null).length, `sin pregunta: ${r.filter(x => x !== null)}`);
 });
 
+// Títulos de la tabla del spec (filas 0–20). Donde el título construido difiere a propósito, la
+// lista de abajo (DIFIEREN) tiene la razón; el título construido es el que vale.
+const TITULOS_SPEC = [
+  'Enterarse antes que el usuario', 'Todo anda… ¿o no?', '¿Anda mal? ¿Qué pasó? ¿Dónde?', 'Contar y medir',
+  'El promedio esconde la falla', 'Latencia, tráfico, errores, saturación', 'Qué pasó en este pedido',
+  'Estructurados y en un solo lugar', 'Seguir un pedido entre servicios', 'De la métrica a la traza, de la traza al log',
+  '¿Cuándo avisar?', 'Avisar por síntoma, no por causa', 'Cuánto fallar está permitido', '¿Está vivo? ¿Está listo?',
+  'Si se cae, levantalo', 'Sumar réplicas con la carga', 'Cortar a tiempo', 'Cuando lo automático empeora las cosas',
+  'Herramientas reales', 'Lo que nos llevamos', 'Seguir explorando'
+];
+const DIFIEREN = {
+  // El spec dice sólo "Seguir explorando" (fila 20): en la slide es el kicker; el h2 es "Llevátela y probala".
+  20: 'Llevátela y probala'
+};
+
+test('slides: hay 21 secciones con títulos del spec', async page => {
+  await open(page, 0);
+  const r = await page.evaluate(() => [...document.querySelectorAll('.reveal .slides > section')].map(s => {
+    const h = s.querySelector('h1, h2');
+    return { t: h.innerHTML.replace(/<br\s*\/?>/g, ' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(), kicker: (s.querySelector('.kicker') || {}).textContent };
+  }));
+  check(r.length === 21, `hay ${r.length} secciones`);
+  r.forEach((x, i) => {
+    const want = DIFIEREN[i] || TITULOS_SPEC[i];
+    check(x.t === want, `slide ${i}: «${x.t}» ≠ «${want}»`);
+  });
+  check(r[20].kicker === TITULOS_SPEC[20], `kicker del outro: ${r[20].kicker}`);
+});
+
 test('outro: link al repo y preset', async page => {
   await open(page, 0);
   const r = await page.evaluate(() => {
     const o = document.querySelector('section.outro');
     const a = o.querySelector('a.repo-link');
-    return { href: a && a.href, text: o.textContent, links: [...o.querySelectorAll('a')].map(x => x.href) };
+    return { href: a && a.href, text: o.textContent, qr: !!o.querySelector('figure.qr img[src]'), links: [...o.querySelectorAll('a')].map(x => x.href) };
   });
   check(r.href === 'https://github.com/gastonprieto/presentacion-monitoreo', `repo-link: ${r.href}`);
   check(r.text.includes('load-balancer'), 'el outro no menciona el preset load-balancer');
+  check(r.qr, 'el outro no tiene el QR');
+  check(r.text.includes('laboratorio con Docker'), 'el outro no menciona el laboratorio con Docker');
   check(r.links.some(h => h.includes('architecture-playground')), 'el outro no linkea al playground');
 });
 
