@@ -4,25 +4,10 @@
 (function () {
   'use strict';
 
-  const { Sim, Clock, svgEl, cubic, curve, edge, pop, C } = window.NetKit;
+  const { Sim, Clock, svgEl, pop, C } = window.NetKit;
   const S = {};
 
   /* ---------- helpers ---------- */
-
-  // Crea la Sim sobre <svg class="sim"> y conecta los widgets que haya en la slide:
-  // .stats (data-fields, data-window), .strip, canvas.chart, canvas.histo
-  function setup(slide, opts) {
-    const sim = new Sim(slide.querySelector('svg.sim'), opts);
-    const st = slide.querySelector('.stats');
-    if (st) Widgets.stats(st, sim, st.dataset.fields ? st.dataset.fields.split(',') : null, +(st.dataset.window || 5));
-    const strip = slide.querySelector('.strip');
-    if (strip) Widgets.strip(strip, sim);
-    const cv = slide.querySelector('canvas.chart');
-    if (cv) Widgets.chart(cv, sim);
-    const hist = slide.querySelector('canvas.histo');
-    if (hist) Widgets.histogram(hist, sim);
-    return sim;
-  }
 
   function on(slide, sel, fn) {
     slide.querySelectorAll(sel).forEach(b => b.addEventListener('click', e => { fn(b, e); b.blur(); }));

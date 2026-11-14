@@ -576,6 +576,26 @@ test('react: autoscaling con pico sano', async page => {
   check(new Set(r.ids).size === r.ids.length, `ids repetidos ${r.ids}`);
 });
 
+test('react: cambiar el umbral del autoscaler no reinicia el enfriamiento', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { autoscale: { target: 0.7, min: 1, max: 6, cooldown: 20, startup: 3 } });
+    s.fastForward(5);
+    s.set('rate', 20);
+    s.fastForward(12);
+    const sc = s.scaler, before = s.ev.filter(e => e.kind === 'scale').map(e => e.t), last = sc.lastChange;
+    const n0 = s.replicaCount;
+    s.set('autoscale', { target: 0.05, min: 1, max: 6, cooldown: 20, startup: 3 });
+    const same = s.scaler === sc;
+    s.fastForward(4);
+    const after = s.ev.filter(e => e.kind === 'scale').map(e => e.t);
+    return { same, last, n0, n1: s.replicaCount, before, after, target: s.scaler.target, now: s.now };
+  }`);
+  check(r.same && r.target === 0.05, `se recreó el scaler: ${JSON.stringify(r)}`);
+  check(r.before.length >= 1 && r.now - r.last < 20, `escenario sin enfriamiento en curso: ${JSON.stringify(r)}`);
+  check(r.after.length === r.before.length && r.n1 === r.n0, `escaló antes del enfriamiento: ${JSON.stringify(r)}`);
+});
+
 test('react: escalar empeora el incidente del pool', async page => {
   await open(page, 0);
   const r = await engine(page, `(svg) => {

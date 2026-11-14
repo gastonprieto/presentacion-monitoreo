@@ -84,6 +84,7 @@ if (SERVICIO === 'pagos') {
 }
 
 // ---------- HTTP ----------
+const SERVICIOS = ['pagos', 'envios'];
 const app = express();
 
 // Colgado: no contesta nada (ni el healthcheck), pero el proceso sigue vivo.
@@ -93,6 +94,7 @@ app.get('/salud', (req, res) => res.json({ servicio: SERVICIO, replica, modo: mo
 
 app.post('/romper', (req, res) => {
   const servicio = req.query.servicio || 'pagos';
+  if (!SERVICIOS.includes(servicio)) return res.status(400).json({ error: `servicio tiene que ser uno de ${SERVICIOS.join(', ')}` });
   const m = req.query.modo;
   if (!MODOS.includes(m)) return res.status(400).json({ error: `modo tiene que ser uno de ${MODOS.join(', ')}` });
   fs.writeFileSync(archivoModo(servicio), m);
@@ -101,6 +103,7 @@ app.post('/romper', (req, res) => {
 
 app.post('/arreglar', (req, res) => {
   const servicio = req.query.servicio || 'pagos';
+  if (!SERVICIOS.includes(servicio)) return res.status(400).json({ error: `servicio tiene que ser uno de ${SERVICIOS.join(', ')}` });
   fs.rmSync(archivoModo(servicio), { force: true });
   res.json({ servicio, modo: 'normal' });
 });

@@ -158,11 +158,6 @@ html, body { background: var(--bg); }
 .chart-box { position: relative; height: 165px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
 .chart-box.tall { height: 270px; }
 
-.strip-box .strip { display: flex; gap: 2px; height: 22px; align-items: stretch; overflow: hidden; }
-.strip i { flex: 0 0 2px; border-radius: 1px; background: var(--green); }
-.strip i.down { background: var(--red); }
-.strip i.partial { background: var(--orange); }
-.strip i.idle { background: #334155; }
 
 /* ---------- SVG de simulación ---------- */
 

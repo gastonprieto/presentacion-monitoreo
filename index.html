@@ -20,7 +20,7 @@
 <div class="reveal">
 <div class="slides">
 
-<!-- ============ 1. PORTADA ============ -->
+<!-- ============ 0. PORTADA ============ -->
 <section class="title-slide" data-scene="title">
   <svg class="bg"></svg>
   <div class="hero">
@@ -88,7 +88,7 @@
       <div class="ex">
         <svg class="spark" viewBox="0 0 200 50" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,40 30,41 60,39 90,40 110,38 125,26 140,14 160,8 200,6"/></svg>
         <div class="ex-row">p95 de checkout <b>380 ms → 3,1 s</b></div>
-        <div class="ex-row">errores <b>0% → 14%</b></div>
+        <div class="ex-row">errores <b>0% → 35%</b></div>
       </div>
     </div>
     <div class="sig l fragment">
@@ -158,7 +158,7 @@
     Una métrica es un número con una marca de tiempo, por servicio. Cada servicio publica cuántos pedidos atiende por segundo, qué porcentaje falla y cuánto tarda (p95: el 95% tarda menos que eso).
     Los tres tipos básicos, con ejemplos de esta misma tienda: un contador sólo sube (pedidos atendidos; lo interesante es cuánto sube por segundo), un gauge sube y baja (conexiones en uso ahora), y un histograma cuenta cuántos pedidos cayeron en cada balde de latencia, de donde salen los percentiles.
     Romper Pagos: en el dashboard se ve en qué servicio sube el p95 y aparecen errores. El histograma corre los pedidos hacia el balde lento y el gauge se clava en 3 de 3. Órdenes también sube, porque espera a Pagos; Envíos sigue igual.
-    Pregunta para la clase: ¿con cuál de estos números se habrían enterado antes que el usuario de la slide 1?
+    Pregunta para la clase: ¿con cuál de estos números se habrían enterado antes que el usuario de la queja del principio?
   </aside>
 </section>
 
@@ -255,7 +255,7 @@
   <aside class="notes">
     Las métricas dijeron que algo anda mal en Pagos. Los logs cuentan qué pasó: cada servicio escribe un renglón por evento, con la hora, el nivel, el servicio, el mensaje y el número de pedido.
     Con todo sano casi todo es info. Romper la DB: aparecen warn (esperó por una conexión) y después error (timeout acquiring db connection → 503). Filtrar por error para ver sólo lo que falló.
-    Apretar "Último error": el buscador se llena con ese pedido y queda su historia completa: Órdenes lo creó, Pagos esperó una conexión y se cansó, Órdenes le contestó error al usuario. Es exactamente la respuesta que le faltaba a la queja de la slide 1.
+    Apretar "Último error": el buscador se llena con ese pedido y queda su historia completa: Órdenes lo creó, Pagos esperó una conexión y se cansó, Órdenes le contestó error al usuario. Es exactamente la respuesta que le faltaba a la queja del principio.
     Pregunta para la clase: ¿qué datos tendría que tener cada renglón para que puedan encontrar el pedido de un usuario que se queja?
   </aside>
 </section>
@@ -450,7 +450,7 @@
     </div>
   </div>
   <aside class="notes">
-    Cuatro alertas típicas: tres por causa (CPU, memoria, una réplica caída) y una por síntoma (errores del checkout, lo que vive el usuario). Correr la noche tranquila: el job de reportes de las 2 y el backup de las 7 suben la CPU, la caché se llena a las 3, el supervisor reinicia una réplica a la 1 y a las 4. Seis veces despierto y ningún usuario se enteró. La de síntoma, en cero.
+    Cuatro alertas típicas: tres por causa (CPU, memoria, una réplica caída) y una por síntoma (errores del checkout, lo que vive el usuario). Correr la noche tranquila: el job de reportes de las 2 y el backup de las 7 suben la CPU, la caché se llena a las 3 y a las 6:20, el supervisor reinicia una réplica a la 1 y a las 4. Seis veces despierto y ningún usuario se enteró. La de síntoma, en cero.
     Pasar a "con incidente": a las 5 Pagos se queda sin conexiones a la DB. Suena la de síntoma. ¿Y la de CPU? No se enteró: los pedidos esperan una conexión, la CPU no sube.
     Apagar las tres de causa: la noche tranquila queda en cero y la del incidente sigue sonando. Eso es fatiga de alertas: si suena seis veces por nada, a la séptima nadie se levanta. Las métricas de causa siguen sirviendo, pero en el dashboard, para investigar, no para despertar a alguien.
     Pregunta para la clase: de las alertas que tienen hoy en su trabajo, ¿cuántas son por causa?
@@ -597,7 +597,7 @@
     </div>
   </div>
   <aside class="notes">
-    Un pico sano: más usuarios, nada roto. El autoscaler mira una métrica (acá, el uso del pool de conexiones de cada réplica de Pagos, promedio de los últimos 5 s) y la compara con un umbral: si está por encima, suma réplicas; si sobra, saca. Siempre entre un mínimo y un máximo. Las réplicas nuevas no reciben pedidos hasta estar listas (la pregunta "¿listo?" de la slide 13): por eso suman capacidad con demora.
+    Un pico sano: más usuarios, nada roto. El autoscaler mira una métrica (acá, el uso del pool de conexiones de cada réplica de Pagos, promedio de los últimos 5 s) y la compara con un umbral: si está por encima, suma réplicas; si sobra, saca. Siempre entre un mínimo y un máximo. Las réplicas nuevas no reciben pedidos hasta estar listas (la pregunta "¿listo?" de la slide de health checks: ¿Está vivo? ¿Está listo?): por eso suman capacidad con demora.
     Subir el tráfico a 18: el pool se llena, 🤖 suma réplicas, pero cada una tarda 3 s en estar lista (aparece "calentando"). En el gráfico se ve la demora entre la carga y las réplicas. Bajar el tráfico: tarda en sacarlas, por el enfriamiento.
     El enfriamiento es cuánto espera entre un cambio y el siguiente, y cuánto tiempo seguido tiene que sobrar capacidad antes de sacar una réplica. Ponerlo en 0 y el umbral en 30%: suma réplicas antes de que las anteriores estén listas, después le sobran, saca, le faltan... Oscila. Cada réplica que arranca y se va cuesta (conexiones nuevas, cachés frías).
     Escalar ayuda cuando el cuello de botella es Pagos. Si el cuello de botella es algo compartido, como la base de datos, no ayuda: lo vemos en dos slides.

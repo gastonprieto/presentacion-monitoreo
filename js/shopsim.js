@@ -191,7 +191,13 @@
       this.o[key] = value;
       if (key === 'fault') return value ? this.breakPagos(value) : this.heal();
       if (key === 'breaker') this._makeBreaker();
-      if (key === 'autoscale') this._makeScaler();
+      if (key === 'autoscale') {
+        // con un scaler vivo se actualizan sus parámetros: uno nuevo perdería lastChange y las recomendaciones
+        // (arrastrar un slider en pleno enfriamiento podría disparar un paso de inmediato)
+        const sc = this.scaler;
+        if (sc && value) Object.assign(sc, { downWindow: 15 }, value);
+        else this._makeScaler();
+      }
       if (key === 'restartPolicy') this.reps.forEach(r => { r.sup.policy = value; });
       if (key === 'readiness' && value) this.reps.forEach(r => { r.inRot = this._ready(r); });
       if (key === 'replicas') this._resize();

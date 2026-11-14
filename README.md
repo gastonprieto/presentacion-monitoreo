@@ -173,4 +173,4 @@ docker compose up -d --scale pagos=1
 | Envíos | `docker compose stop envios` | Pagos cobra pero falla al llamar a Envíos: en la traza, el error está en el último salto | `docker compose start envios` |
 | El collector | `docker compose stop collector` | La tienda sigue andando pero el dashboard se queda sin datos: el monitoreo también puede caerse | `docker compose start collector` |
 
-Se puede romper Envíos en lugar de Pagos con `?servicio=envios` en `/romper` y `/arreglar` (`lento`, `colgado` o `crash`). Con `lento`, Envíos tarda 1,5 s: los checkouts salen bien pero lentos, y en la traza el span largo es el de Envíos, no el de la base.
+Se puede romper Envíos en lugar de Pagos con `?servicio=envios` en `/romper` y `/arreglar` (`lento`, `colgado` o `crash`; otro valor da 400). Un Envíos `colgado` también necesita `docker compose restart envios` después de arreglar. Con `lento`, Envíos tarda 1,5 s: los checkouts salen bien pero lentos, y en la traza el span largo es el de Envíos, no el de la base.
