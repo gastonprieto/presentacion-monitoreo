@@ -1,0 +1,12 @@
+# Alertmanager agrupa las alertas que le manda Prometheus y decide a quién avisar.
+# En el laboratorio no avisa a nadie (receptor "nadie"): las alertas se ven en su UI
+# (localhost:9093). En la vida real acá iría PagerDuty, Slack, mail…
+route:
+  receiver: nadie
+  group_by: [alertname]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 1h
+
+receivers:
+  - name: nadie

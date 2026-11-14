@@ -1,0 +1,29 @@
+# Dos alertas, una de cada tipo (slide 11 "Avisar por síntoma, no por causa").
+groups:
+  - name: tienda
+    rules:
+      # SÍNTOMA: lo que sufre el usuario. Más del 5% de los checkouts fallan durante 1 minuto.
+      - alert: CheckoutErrores
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="ordenes", http_route="/checkout", http_response_status_code=~"5.."}[1m]))
+            /
+          sum(rate(http_server_request_duration_seconds_count{job="ordenes", http_route="/checkout"}[1m]))
+            > 0.05
+        for: 1m
+        labels:
+          severidad: pagina
+          tipo: sintoma
+        annotations:
+          resumen: "Fallan {{ $value | humanizePercentage }} de los checkouts"
+          descripcion: "Los usuarios no pueden comprar. Mirá el dashboard Tienda y las trazas de Órdenes → Pagos."
+
+      # CAUSA: algo interno que puede (o no) afectar al usuario. Pagos usa más del 50% de un núcleo durante 1 minuto.
+      - alert: PagosCPUAlta
+        expr: max(proceso_cpu_uso_ratio{job="pagos"}) > 0.5
+        for: 1m
+        labels:
+          severidad: aviso
+          tipo: causa
+        annotations:
+          resumen: "Pagos usa {{ $value | humanizePercentage }} de un núcleo"
+          descripcion: "Una causa: puede no tener impacto. Antes de despertar a alguien, ¿CheckoutErrores está sonando?"

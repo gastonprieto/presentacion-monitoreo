@@ -1,0 +1,14 @@
+{
+  "name": "lab-monitoreo-servicio",
+  "private": true,
+  "description": "Servicio de la tienda (Órdenes, Pagos o Envíos) instrumentado con OpenTelemetry",
+  "main": "server.js",
+  "scripts": { "start": "node --require ./otel.js server.js" },
+  "dependencies": {
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/auto-instrumentations-node": "0.83.1",
+    "@opentelemetry/sdk-node": "0.301.2",
+    "express": "5.3.0",
+    "pg": "8.23.1"
+  }
+}
