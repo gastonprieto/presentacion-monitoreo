@@ -833,6 +833,31 @@ test('escena doradas: la saturación llega antes que los errores', async page =>
   check(r.err - r.sat >= 1, `saturación en ${r.sat} s, errores en ${r.err} s (ventana ${r.win} s)`);
 });
 
+test('escena doradas: tráfico es la demanda, no lo que termina Pagos', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.doradas, sec => {
+    const sim = sec._scene.sim, rate = sim.o.rate;
+    const arr = [];
+    sim.on('request', () => arr.push(sim.now)); // llegadas, contadas aparte
+    sim.fastForward(20);
+    sec.querySelector('[data-act=break]').click();
+    const cell = () => +sec.querySelector('.sstats [data-f=rps]').textContent.replace(',', '.');
+    const rows = [];
+    for (let i = 0; i < 20; i++) {
+      sim.fastForward(0.5);
+      const t = sim.now, win = sec._scene.trafficWindow;
+      rows.push({ shown: cell(), arrivals: arr.filter(x => x > t - win).length / win, done: sim.window(3, 'pagos').rps });
+    }
+    return { rate, rows };
+  });
+  const bad = r.rows.filter(x => Math.abs(x.shown - x.arrivals) > 0.06);
+  check(!bad.length, `no muestra las llegadas: ${JSON.stringify(bad[0])}`);
+  // Llegadas Poisson a 6/s: en 10 s varían ±25% solas; lo que no puede pasar es el salto de las respuestas acumuladas
+  const off = r.rows.filter(x => Math.abs(x.shown - r.rate) > 0.3 * r.rate);
+  check(!off.length, `tráfico lejos de ${r.rate}/s: ${off.map(x => x.shown)}`);
+  check(r.rows.some(x => x.done > 1.4 * r.rate), 'la prueba ya no reproduce el pico de respuestas que quería evitar');
+});
+
 test('escena doradas: el slider de pool redibuja las conexiones', async page => {
   await open(page);
   const r = await evalScene(page, SL.doradas, `(sec, SI) => {

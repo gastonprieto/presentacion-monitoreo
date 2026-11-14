@@ -65,7 +65,7 @@
       </div>
       <ul class="points">
         <li class="fragment">Sin señales, el primero en enterarse es <b>el usuario</b>.</li>
-        <li class="fragment">Y te dice <b>que</b> falla, no <b>por qué</b> ni <b>dónde</b>.</li>
+        <li class="fragment">Y te dice <b>qué</b> falla, no <b>por qué</b> ni <b>dónde</b>.</li>
       </ul>
     </div>
   </div>
@@ -222,7 +222,7 @@
     </div>
   </div>
   <aside class="notes">
-    Las cuatro señales doradas: latencia (cuánto tarda), tráfico (cuánto le piden), errores (cuánto falla) y saturación (qué tan lleno está el recurso más escaso). Acá el recurso escaso es el pool de conexiones de Pagos a su base de datos: los casilleros verdes debajo de Pagos.
+    Las cuatro señales doradas: latencia (cuánto tarda), tráfico (cuánto le piden: acá, los pedidos que llegan, promediados en 10 s), errores (cuánto falla) y saturación (qué tan lleno está el recurso más escaso). Acá el recurso escaso es el pool de conexiones de Pagos a su base de datos: los casilleros verdes debajo de Pagos.
     Subir el tráfico hasta 12 o más: el pool se llena, la latencia sube y, si sigue, aparecen errores. Bajar el tráfico y apretar "DB lenta": la saturación llega al 100% en un segundo y los errores tardan un par más, porque primero los pedidos esperan una conexión.
     Probar agrandar el pool con la DB lenta: alivia un poco, pero son más consultas contra la misma base. Dejarlo como pregunta abierta; lo retomamos en "Reaccionar solo".
     Pregunta para la clase: de las cuatro, ¿cuál les daría más tiempo para reaccionar antes de que el usuario note algo?

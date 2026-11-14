@@ -211,6 +211,7 @@
   /* ---------- 5. señales doradas: latencia, tráfico, errores, saturación ---------- */
 
   const GOLD_OPTS = { rate: 6, showPool: true };
+  const TRAFFIC_WIN = 10; // segundos de la ventana de la demanda
 
   S.doradas = slide => {
     const sim = setupShop(slide, GOLD_OPTS);
@@ -226,7 +227,21 @@
     pool.addEventListener('input', syncPool);
     syncPool();
     on(slide, '[data-act=reset]', () => { sim.reset(GOLD_OPTS); resetSliders(slide); });
-    return life(sim);
+    // Tráfico = demanda (pedidos que llegan), no las respuestas de Pagos: al romper, los timeouts acumulados
+    // salen todos juntos y las respuestas/s saltan aunque nadie pida más. Ventana más larga que el resto
+    // porque las llegadas son Poisson (en 3 s varían ±40%). Pisa la celda rps de svcStats en cada tick.
+    const cell = slide.querySelector('.sstats [data-f=rps]');
+    let arrivals = [];
+    const traffic = () => {
+      const from = sim.now - TRAFFIC_WIN;
+      while (arrivals.length && arrivals[0] <= from) arrivals.shift();
+      cell.textContent = (arrivals.length / TRAFFIC_WIN).toFixed(1).replace('.', ',');
+    };
+    sim.on('request', () => arrivals.push(sim.now));
+    sim.on('tick', traffic);
+    sim.on('reset', () => { arrivals = []; traffic(); });
+    traffic();
+    return Object.assign(life(sim), { trafficWindow: TRAFFIC_WIN });
   };
 
   window.Scenes = S;
