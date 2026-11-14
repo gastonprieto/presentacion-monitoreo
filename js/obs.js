@@ -119,7 +119,8 @@
       return {
         total, bad, allowed,
         remainingPct: Math.max(-100, Math.min(100, clean(remaining))),
-        burnRate: clean((bad / total) / (1 - this.slo)),
+        // con slo = 1 no hay presupuesto: el piso evita dividir por cero (cualquier falla da un burn rate enorme)
+        burnRate: clean((bad / total) / Math.max(1 - this.slo, 1e-6)),
       };
     }
   }

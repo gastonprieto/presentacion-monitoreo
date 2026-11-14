@@ -577,6 +577,109 @@ html.mobile .tj-list { overflow: visible; }
 html.mobile .tj-row { padding: 9px 10px; }
 html.mobile .tj-logs .log-lines { height: 220px; flex: none; }
 
+/* ---------- slides 10–12: alertas y SLO (escenas manuales, svg.alertc) ---------- */
+
+:root { --amber: #fbbf24; }
+@keyframes alert-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.legend i.sq { border-radius: 3px; }
+.legend i.sq.hit { background: var(--red); }
+.legend i.sq.fp { background: var(--amber); }
+.legend i.sq.miss { background: transparent; border: 2px dashed var(--red); width: 8px; height: 8px; }
+.legend i.sq.broken { background: rgba(248, 113, 113, .3); }
+.alertc .grid { stroke: #1e2a4a; stroke-width: 1; }
+.alertc .grid.zero { stroke: #64748b; stroke-dasharray: 4 4; }
+.alertc .ax { fill: var(--dim); font: 12px var(--mono); }
+.alertc .ax-title { fill: var(--purple); font: 600 13px var(--mono); letter-spacing: .04em; }
+.alertc .series { fill: none; stroke: var(--purple); stroke-width: 2.5; stroke-linejoin: round; }
+.alertc .series.dim { stroke: #4c4380; stroke-width: 1.5; opacity: .6; }
+.alertc .dot { fill: var(--purple); }
+.alertc .dot.bad { fill: #fff; stroke: var(--red); stroke-width: 2; }
+.alertc .inc-band { fill: rgba(248, 113, 113, .13); }
+.alertc .inc-label { fill: #fca5a5; font: 600 12px var(--mono); }
+.alertc .thr-line { stroke: var(--red); stroke-width: 2; stroke-dasharray: 8 5; }
+.alertc .thr-line.small { stroke-width: 1.3; stroke-dasharray: 5 4; opacity: .7; }
+.alertc .thr-hit { stroke: transparent; stroke-width: 22; cursor: ns-resize; touch-action: none; }
+.alertc .thr-tag { cursor: ns-resize; touch-action: none; }
+.alertc .thr-tag rect { fill: #3a1018; stroke: var(--red); stroke-width: 1.5; }
+.alertc .thr-tag text { fill: #fecaca; font: 700 13px var(--mono); }
+.alertc .cursor { stroke: #cbd5e1; stroke-width: 1.5; opacity: .55; }
+.alertc .live.firing .cursor { stroke: var(--red); opacity: 1; stroke-width: 2.5; }
+.alertc .pill rect { fill: #0d1530; stroke: var(--line); stroke-width: 1.5; }
+.alertc .pill text { fill: var(--muted); font: 700 13px var(--mono); }
+.alertc .live.pending .pill rect { stroke: var(--yellow); }
+.alertc .live.pending .pill text { fill: var(--yellow); }
+.alertc .live.ok .pill text, .alertc .pill.ok text { fill: var(--green); }
+.alertc .live.firing .pill rect, .alertc .pill.firing rect { fill: #3a1018; stroke: var(--red); }
+.alertc .live.firing .pill, .alertc .pill.firing { animation: alert-pulse .9s ease-in-out infinite; }
+.alertc .live.firing .pill text, .alertc .pill.firing text { fill: #fecaca; }
+.alertc .hit-mark { fill: var(--red); }
+.alertc .fp-mark { fill: var(--amber); }
+.alertc .miss-mark { fill: none; stroke: var(--red); stroke-width: 2.5; stroke-dasharray: 7 5; }
+.alertc .mk-label { font: 700 11.5px var(--mono); }
+.alertc .hit-mark-t, .alertc .miss-mark-t { fill: var(--red); }
+.alertc .fp-mark-t { fill: var(--amber); }
+/* 11. carriles de la noche */
+.alertc .lane-bg { fill: rgba(17, 26, 51, .6); stroke: var(--line); }
+.alertc .l-sym .lane-bg { stroke: var(--cyan); stroke-width: 1.5; }
+.alertc .lane-name { fill: #f1f5f9; font: 700 15px var(--sans); }
+.alertc .lane-rule { fill: var(--muted); font: 12.5px var(--mono); }
+.alertc .lane-kind { fill: var(--dim); font: 12px var(--sans); font-style: italic; }
+.alertc .l-sym .lane-kind { fill: var(--cyan); }
+.alertc .lane { transition: opacity .3s; }
+.alertc .lane.off { opacity: .35; }
+.alertc .page { opacity: 0; }
+.alertc .page.shown { opacity: 1; }
+.alertc .fire-band { fill: rgba(248, 113, 113, .22); stroke: var(--red); stroke-width: 1; }
+.alertc .lane.off .fire-band { fill: rgba(148, 163, 184, .12); stroke: #475569; }
+.alertc .page.firing .fire-band { animation: alert-pulse .9s ease-in-out infinite; fill: rgba(248, 113, 113, .4); }
+.alertc .pg-icon { font-size: 14px; }
+.alertc .night-clock rect { fill: #0a0f1f; stroke: #cbd5e1; stroke-width: 1; }
+.alertc .night-clock text { fill: #f1f5f9; font: 700 13px var(--mono); }
+/* 12. presupuesto */
+.alertc .slo-day { fill: #f1f5f9; font: 700 17px var(--sans); }
+.alertc .slo-obj { fill: var(--muted); font: 600 13px var(--mono); }
+.alertc .bud-bg { fill: #1e293b; stroke: var(--line); }
+.alertc .bud-fill { transition: fill .3s; }
+.alertc .bud-fill.ok { fill: #166534; }
+.alertc .bud-fill.warn { fill: #854d0e; }
+.alertc .bud-fill.out { fill: #7f1d1d; }
+.alertc .bud-txt { fill: #fff; font: 700 17px var(--sans); }
+.alertc .neg-zone { fill: rgba(248, 113, 113, .06); }
+.alertc .neg-label { fill: #fca5a5; font: 600 12px var(--mono); opacity: .8; }
+.alertc .series.budget { stroke: var(--green); stroke-width: 2.5; }
+.alertc .alerting .series.budget { stroke: var(--red); }
+.alertc .broken-band { fill: rgba(248, 113, 113, .16); }
+.alertc .burn-txt { fill: #f1f5f9; font: 700 16px var(--sans); }
+.alertc .lasts-txt { fill: var(--muted); font: 14px var(--sans); }
+.alertc .alerting .lasts-txt { fill: #fca5a5; }
+
+.panel .rule-out { font: 14px var(--mono); color: #cbd5e1; background: var(--panel-2); border: 1px dashed #4b2a36; border-radius: 10px; padding: 7px 10px; }
+.panel .rule-out b { color: #fecaca; }
+.stat.s-caught b { color: var(--green); }
+.stat.s-missed b { color: var(--red); }
+.stat.s-falsePos b { color: var(--amber); }
+.stat.s-total b, .stat.s-cause b { color: var(--amber); }
+.stat.s-sym b { color: var(--cyan); }
+.stat.s-burn b { color: var(--yellow); }
+.box.alerts { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px; }
+.box.alerts .field { font-size: 14.5px; cursor: pointer; }
+.box.alerts .field small { color: var(--dim); font: 11.5px var(--mono); margin-left: 4px; }
+.box.alerts .field.sym span { color: var(--cyan); font-weight: 600; }
+.pager { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); min-height: 30px; }
+.pager .face { font-size: 26px; }
+.pager .pages { line-height: 1.3; }
+
+html.mobile .alertc .pill text, html.mobile .alertc .thr-tag text { font-size: 12px; }
+html.mobile .alertc .lane-name { font-size: 12.5px; }
+html.mobile .alertc .ax { font-size: 11px; }
+html.mobile .alertc .bud-txt { font-size: 14px; }
+html.mobile .alertc .slo-day { font-size: 14px; }
+html.mobile .alertc .slo-obj { font-size: 11px; }
+html.mobile .alertc .burn-txt { font-size: 13px; }
+html.mobile .alertc .lasts-txt { font-size: 12px; }
+html.mobile .box.alerts .field { padding: 6px 0; }
+html.mobile .box.alerts .field input[type=checkbox] { width: 22px; height: 22px; }
+
 [hidden] { display: none !important; }
 
 /* Link al repo en la diapositiva final (icono de GitHub) */

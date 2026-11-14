@@ -465,5 +465,455 @@
     });
   };
 
+  /* ---------- helpers de las slides de alertas (10–12) ---------- */
+
+  const { AlertRule, classifyAlerts, ErrorBudget, rng } = window.ObsKit;
+  const comma = (x, d = 1) => x.toFixed(d).replace('.', ',');
+  const overlaps = (a, b) => a[0] <= b[1] && b[0] <= a[1];
+  const pts = (arr, X, Y) => arr.map(([t, v]) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  // Pasa un evento de puntero a coordenadas del viewBox del svg
+  const svgPoint = (svg, e) => {
+    const p = svg.createSVGPoint();
+    p.x = e.clientX; p.y = e.clientY;
+    return p.matrixTransform(svg.getScreenCTM().inverse());
+  };
+  const txt = (parent, attrs, s) => { const t = svgEl('text', attrs, parent); t.textContent = s; return t; };
+
+  /* ---------- 10. ¿cuándo avisar? umbral y ventana ---------- */
+
+  // Una hora de % de errores del checkout, un punto por minuto de juego: ruido de fondo sembrado, picos cortos de 1, 2 y
+  // 3 min y un incidente real sostenido (UMB_INC, 11 min). Calibrado con la semilla: con el umbral y la ventana iniciales
+  // de la slide (4%, 3 min) avisa sólo del incidente; con 1% el ruido suena; con 10% el incidente se escapa.
+  const UMB_SEED = 26, UMB_MIN = 60, UMB_INC = [36, 46];
+  const UMB_SPIKES = { 8: [5.5], 17: [4.8, 6.2], 26: [5.2, 7, 4.6], 52: [8.2] };
+  const UMB_INC_V = [4.6, 5.4, 6.1, 6.6, 6.2, 7.1, 6.8, 6.3, 6.7, 5.8, 5.1];
+  const UMB_STEP = 0.5, UMB_PAUSE = 2; // s de simulación por minuto de juego; pausa al final de cada pasada
+  const UMB_YMAX = 10;
+
+  function umbralSeries() {
+    const r = rng(UMB_SEED), spike = {}, out = [];
+    for (const k in UMB_SPIKES) UMB_SPIKES[k].forEach((x, i) => { spike[+k + i] = x; });
+    let v = 1;
+    for (let t = 0; t < UMB_MIN; t++) {
+      v = 0.55 * v + 0.45 * (0.45 + 1.1 * r());
+      let y = v;
+      if (spike[t] !== undefined) y = spike[t] + (r() - 0.5) * 0.3;
+      if (t >= UMB_INC[0] && t <= UMB_INC[1]) y = UMB_INC_V[t - UMB_INC[0]] + (r() - 0.5) * 0.3;
+      out.push([t, Math.round(y * 100) / 100]);
+    }
+    return out;
+  }
+
+  S.umbral = slide => {
+    const { svg, clock, M } = manual(slide, 'alertc');
+    const P = M ? { x0: 36, x1: 388, y0: 70, y1: 400 } : { x0: 60, x1: 874, y0: 84, y1: 520 };
+    const series = umbralSeries();
+    const X = t => P.x0 + (P.x1 - P.x0) * t / (UMB_MIN - 1);
+    const Y = v => P.y1 - (P.y1 - P.y0) * Math.max(0, Math.min(v, UMB_YMAX)) / UMB_YMAX;
+    const thrIn = slide.querySelector('input.thr'), thrOut = slide.querySelector('.thr-out');
+    const ruleOut = slide.querySelector('.rule-out');
+    const upd = hstats(slide, [['caught', 'Atrapados'], ['missed', 'Se escaparon'], ['falsePos', 'Falsas alarmas'], ['delay', 'Demora']]);
+    let thr = +thrIn.value, win = 3, res = null, live = 'ok', t0 = clock.now;
+
+    // fondo: grilla, incidente real y la serie
+    const gGrid = svgEl('g', {}, svg), gInc = svgEl('g', {}, svg), gMarks = svgEl('g', {}, svg);
+    const gLine = svgEl('g', {}, svg), gThr = svgEl('g', {}, svg), gCur = svgEl('g', {}, svg);
+    for (let v = 0; v <= UMB_YMAX; v += 2) {
+      svgEl('line', { class: 'grid', x1: P.x0, x2: P.x1, y1: Y(v), y2: Y(v) }, gGrid);
+      txt(gGrid, { class: 'ax', x: P.x0 - 8, y: Y(v) + 4, 'text-anchor': 'end' }, `${v}%`);
+    }
+    for (let t = 0; t < UMB_MIN; t += M ? 15 : 10) txt(gGrid, { class: 'ax', x: X(t), y: P.y1 + 20, 'text-anchor': 'middle' }, `min ${t}`);
+    txt(gGrid, { class: 'ax-title', x: M ? 8 : P.x0, y: M ? 26 : 30 }, M ? '% de error por minuto' : '% de checkouts con error, por minuto');
+    svgEl('rect', { class: 'inc-band', x: X(UMB_INC[0]) - 3, y: P.y0, width: X(UMB_INC[1]) - X(UMB_INC[0]) + 6, height: P.y1 - P.y0 }, gInc);
+    txt(gInc, { class: 'inc-label', x: (X(UMB_INC[0]) + X(UMB_INC[1])) / 2, y: P.y0 + 16, 'text-anchor': 'middle' }, M ? 'incidente' : 'incidente real');
+    svgEl('polyline', { class: 'series', points: pts(series, X, Y) }, gLine);
+    const dots = series.map(([t, v]) => svgEl('circle', { class: 'dot', cx: X(t), cy: Y(v), r: M ? 2.6 : 3.5 }, gLine));
+    // umbral: línea + manija que se arrastra
+    const thrLine = svgEl('line', { class: 'thr-line', x1: P.x0, x2: P.x1 }, gThr);
+    const thrHit = svgEl('line', { class: 'thr-hit', x1: P.x0, x2: P.x1 }, gThr);
+    const thrTag = svgEl('g', { class: 'thr-tag' }, gThr);
+    svgEl('rect', { x: -2, y: -12, width: M ? 50 : 58, height: 24, rx: 7 }, thrTag);
+    const thrTxt = txt(thrTag, { x: M ? 23 : 27, y: 5, 'text-anchor': 'middle' }, '');
+    // cursor en vivo
+    const cur = svgEl('line', { class: 'cursor', y1: P.y0 - 4, y2: P.y1 }, gCur);
+    const pill = svgEl('g', { class: 'pill', transform: `translate(${P.x1},${M ? 22 : 26})` }, gCur);
+    const pillBg = svgEl('rect', { x: M ? -170 : -230, y: -15, width: M ? 170 : 230, height: 28, rx: 14 }, pill);
+    const pillTxt = txt(pill, { x: M ? -85 : -115, y: 5, 'text-anchor': 'middle' }, '');
+
+    const fmtWin = w => (w ? `${w} min` : 'apenas pase');
+    const evaluate = () => {
+      const { firings } = new AlertRule({ threshold: thr, forSec: win }).evaluate(series);
+      const cls = classifyAlerts(firings, [UMB_INC]);
+      const hit = firings.find(f => overlaps(f, UMB_INC));
+      res = Object.assign(cls, { firings, delay: hit ? Math.max(0, hit[0] - UMB_INC[0]) : null });
+    };
+    const drawRule = () => {
+      const y = Y(thr);
+      [thrLine, thrHit].forEach(l => { l.setAttribute('y1', y); l.setAttribute('y2', y); });
+      thrTag.setAttribute('transform', `translate(${P.x1 - (M ? 48 : 56)},${y - 16})`);
+      thrTxt.textContent = `${comma(thr, thr % 1 ? 1 : 0)}%`;
+      dots.forEach((d, i) => d.classList.toggle('bad', series[i][1] > thr));
+      gMarks.innerHTML = '';
+      const band = (f, cls, label) => {
+        const x = X(f[0]), w = Math.max(M ? 6 : 8, X(f[1]) - X(f[0]));
+        svgEl('rect', { class: cls, x, y: P.y0 - 26, width: w, height: 12, rx: 3 }, gMarks);
+        if (label && !M) txt(gMarks, { class: `mk-label ${cls}-t`, x: x + w / 2, y: P.y0 - 32, 'text-anchor': 'middle' }, label);
+      };
+      res.firings.forEach(f => {
+        if (overlaps(f, UMB_INC)) band(f, 'hit-mark', `🔔 +${res.delay} min`);
+        else band(f, 'fp-mark', 'falsa');
+      });
+      if (res.missed) {
+        svgEl('rect', { class: 'miss-mark', x: X(UMB_INC[0]) - 6, y: P.y0 - 3, width: X(UMB_INC[1]) - X(UMB_INC[0]) + 12, height: P.y1 - P.y0 + 6, rx: 6 }, gMarks);
+        txt(gMarks, { class: 'mk-label miss-mark-t', x: (X(UMB_INC[0]) + X(UMB_INC[1])) / 2, y: P.y0 - 14, 'text-anchor': 'middle' }, 'se escapó');
+      }
+      thrOut.textContent = `${comma(thr, thr % 1 ? 1 : 0)}%`;
+      ruleOut.innerHTML = `🔔 Avisar si errores &gt; <b>${comma(thr, thr % 1 ? 1 : 0)}%</b> ${win ? `durante <b>${win} min</b> seguidos` : '<b>apenas pase</b>'}`;
+      upd({ caught: res.caught, missed: res.missed, falsePos: res.falsePos, delay: res.delay === null ? '—' : `${res.delay} min` });
+    };
+    const refresh = () => { evaluate(); drawRule(); drawLive(); };
+
+    // Cursor: recorre la serie en tiempo de simulación y muestra el estado de la regla en ese minuto
+    let pend = 0;
+    const drawLive = () => {
+      const cycle = UMB_MIN * UMB_STEP + UMB_PAUSE;
+      const minute = Math.min(UMB_MIN - 1, Math.floor(((clock.now - t0) % cycle) / UMB_STEP));
+      const rule = new AlertRule({ threshold: thr, forSec: win });
+      for (let i = 0; i <= minute; i++) live = rule.step(series[i][0], series[i][1]);
+      pend = rule.badSince === null ? 0 : minute - rule.badSince;
+      cur.setAttribute('x1', X(minute)); cur.setAttribute('x2', X(minute));
+      gCur.setAttribute('class', `live ${live}`);
+      pillTxt.textContent = live === 'firing' ? `🔔 SONANDO · min ${minute}`
+        : live === 'pending' ? `⏳ pendiente ${pend} de ${win} min` : `✓ ok · min ${minute}`;
+    };
+    clock.onTick = drawLive;
+
+    thrIn.addEventListener('input', () => { thr = +thrIn.value; refresh(); });
+    seg(slide, 'win', v => { win = +v; refresh(); });
+    // arrastrar la línea del umbral mueve el slider
+    let drag = false;
+    const dragTo = e => {
+      const p = svgPoint(svg, e);
+      const v = (P.y1 - p.y) / (P.y1 - P.y0) * UMB_YMAX;
+      const step = +thrIn.step;
+      const snapped = Math.max(+thrIn.min, Math.min(+thrIn.max, Math.round(v / step) * step));
+      if (snapped !== thr) { thrIn.value = snapped; thrIn.dispatchEvent(new Event('input')); }
+    };
+    [thrHit, thrTag].forEach(el => el.addEventListener('pointerdown', e => { drag = true; svg.setPointerCapture(e.pointerId); dragTo(e); e.preventDefault(); }));
+    svg.addEventListener('pointermove', e => { if (drag) dragTo(e); });
+    svg.addEventListener('pointerup', () => { drag = false; });
+    svg.addEventListener('pointercancel', () => { drag = false; });
+    refresh();
+    return {
+      start: () => clock.start(), stop: () => clock.stop(), ff: sec => ffClock(clock, sec),
+      state: () => ({ threshold: thr, forMin: win, caught: res.caught, missed: res.missed, falsePos: res.falsePos, delay: res.delay, live })
+    };
+  };
+
+  /* ---------- 11. avisar por síntoma, no por causa ---------- */
+
+  // Una noche de 8 h (un punto por minuto), comprimida a SIN_HOUR s de simulación por hora. Las causas se mueven solas
+  // sin que nadie sufra: el job de reportes (02:00) y un backup (05:30) suben la CPU; la caché se llena a las 03:00 y a
+  // las 06:20; el supervisor reinicia una réplica a la 01:10 y a las 04:40 (las otras dos atienden). Con incidente, a
+  // las 05:00 Pagos se queda sin conexiones a la DB: suben los errores del checkout, la CPU no se entera.
+  // El rng se consume igual en las dos noches: lo único que cambia es el incidente.
+  const NIGHT_MIN = 480, SIN_HOUR = 4, SIN_SEED = 11;
+  const SIN_ALERTS = [
+    { k: 'cpu', name: '🔥 CPU alta', rule: '> 85% · 5 min', max: 100, unit: '%', opts: { threshold: 85, forSec: 5 } },
+    { k: 'mem', name: '🧠 Memoria alta', rule: '> 85% · 5 min', max: 100, unit: '%', opts: { threshold: 85, forSec: 5 } },
+    { k: 'rep', name: '📦 Una réplica caída', rule: '< 3 réplicas · 1 min', max: 3, unit: '', line: 2.5, opts: { threshold: 3, forSec: 1, above: false } },
+    { k: 'sym', name: '🛒 Errores de checkout', rule: '> 5% · 5 min', max: 15, unit: '%', opts: { threshold: 5, forSec: 5 } }
+  ];
+
+  function nightSeries(incident) {
+    const r = rng(SIN_SEED), s = { cpu: [], mem: [], rep: [], sym: [] };
+    for (let m = 0; m < NIGHT_MIN; m++) {
+      let c = 24 + 10 * r();
+      if (m >= 120 && m < 146) c = 90 + 6 * r();
+      if (m >= 330 && m < 344) c = 87 + 5 * r();
+      let me = 62 + 18 * Math.min(1, m / 180) + 3 * r();
+      if (m >= 180 && m < 232) me = 87 + 3 * r();
+      else if (m >= 380 && m < 418) me = 87 + 4 * r();
+      else if (m >= 232) me = 71 + 4 * r();
+      const up = (m >= 70 && m < 73) || (m >= 280 && m < 284) ? 2 : 3;
+      let e = 0.2 + 0.5 * r();
+      const ri = r();
+      if (up < 3) e += 0.8;
+      if (incident && m >= 300 && m < 342) e = 8 + 6 * ri;
+      s.cpu.push([m, c]); s.mem.push([m, me]); s.rep.push([m, up]); s.sym.push([m, e]);
+    }
+    return s;
+  }
+
+  S.sintoma = slide => {
+    const { svg, clock, M } = manual(slide, 'alertc');
+    const nights = {};
+    ['calm', 'incident'].forEach(n => {
+      const series = nightSeries(n === 'incident');
+      const firings = {};
+      SIN_ALERTS.forEach(a => { firings[a.k] = new AlertRule(a.opts).evaluate(series[a.k]).firings; });
+      nights[n] = { series, firings };
+    });
+    const boxes = [...slide.querySelectorAll('input[data-alert]')];
+    const enabled = {};
+    boxes.forEach(b => { enabled[b.dataset.alert] = b.checked; });
+    const upd = hstats(slide, [['total', 'Alertas por noche'], ['cause', 'Por causa'], ['sym', 'Por síntoma']]);
+    const face = slide.querySelector('.pager .face'), pages = slide.querySelector('.pager .pages');
+    let night = 'calm', t0 = clock.now, minute = 0, seen = {};
+
+    // geometría: escritorio con rótulos a la izquierda; celular con el rótulo arriba de cada carril
+    const LX = M ? { px0: 12, px1: 388 } : { px0: 214, px1: 882 };
+    const lane = i => (M ? { y0: 30 + i * 98, top: 30 + i * 98 + 22, bot: 30 + i * 98 + 86 }
+      : { y0: 50 + i * 121, top: 50 + i * 121 + 14, bot: 50 + i * 121 + 104 });
+    const X = m => LX.px0 + (LX.px1 - LX.px0) * m / NIGHT_MIN;
+    const gHead = svgEl('g', {}, svg), gLanes = svgEl('g', {}, svg), gCur = svgEl('g', {}, svg), gPop = svgEl('g', {}, svg);
+    const defs = svgEl('defs', {}, svg);
+    const clipId = `sin-clip-${Math.random().toString(36).slice(2, 7)}`;
+    const clip = svgEl('rect', { x: 0, y: 0, width: 0, height: NetKit.H }, svgEl('clipPath', { id: clipId }, defs));
+    for (let h = 0; h <= 8; h++) {
+      svgEl('line', { class: 'grid', x1: X(h * 60), x2: X(h * 60), y1: lane(0).y0 + 4, y2: lane(3).bot }, gHead);
+      if (!M || h % 2 === 0) txt(gHead, { class: 'ax', x: X(h * 60), y: M ? 22 : 36, 'text-anchor': h === 0 ? 'start' : h === 8 ? 'end' : 'middle' }, `0${h}:00`);
+    }
+    const lanes = SIN_ALERTS.map((a, i) => {
+      const L = lane(i), g = svgEl('g', { class: `lane l-${a.k}` }, gLanes);
+      svgEl('rect', { class: 'lane-bg', x: M ? 4 : 10, y: L.y0 + 2, width: M ? 392 : 880, height: M ? 92 : 114, rx: 10 }, g);
+      if (M) txt(g, { class: 'lane-name', x: 12, y: L.y0 + 16 }, `${a.name}  ·  ${a.rule}`);
+      else {
+        txt(g, { class: 'lane-name', x: 24, y: L.y0 + 40 }, a.name);
+        txt(g, { class: 'lane-rule', x: 24, y: L.y0 + 62 }, a.rule);
+        txt(g, { class: 'lane-kind', x: 24, y: L.y0 + 84 }, a.k === 'sym' ? 'síntoma: lo que sufre el usuario' : 'causa');
+      }
+      const Y = v => L.bot - (L.bot - L.top) * Math.min(v, a.max) / a.max;
+      const thr = Y(a.line || a.opts.threshold); // réplicas: la línea va entre 3 y 2 (si no, tapa la serie)
+      svgEl('line', { class: 'thr-line small', x1: LX.px0, x2: LX.px1, y1: thr, y2: thr }, g);
+      const dim = svgEl('polyline', { class: 'series dim' }, g);
+      const lit = svgEl('polyline', { class: 'series', 'clip-path': `url(#${clipId})` }, g);
+      const marks = svgEl('g', {}, g);
+      return { a, g, Y, dim, lit, marks, L };
+    });
+    const cur = svgEl('line', { class: 'cursor', y1: M ? 24 : 40, y2: lane(3).bot }, gCur);
+    // la hora actual va en la fila de las horas, sobre un fondo que tapa el rótulo de abajo
+    const clockG = svgEl('g', { class: 'night-clock' }, gCur);
+    svgEl('rect', { x: M ? -30 : -36, y: M ? -13 : -15, width: M ? 60 : 72, height: M ? 20 : 24, rx: 7 }, clockG);
+    const clockTxt = txt(clockG, { y: M ? 2 : 3, 'text-anchor': 'middle' }, '');
+
+    const drawNight = () => {
+      const n = nights[night];
+      lanes.forEach(ln => {
+        const p = pts(n.series[ln.a.k], X, ln.Y);
+        ln.dim.setAttribute('points', p);
+        ln.lit.setAttribute('points', p);
+        ln.marks.innerHTML = '';
+        ln.pages = n.firings[ln.a.k].map(f => {
+          const x = X(f[0]), w = Math.max(5, X(f[1]) - x);
+          const g = svgEl('g', { class: 'page', 'data-start': f[0] }, ln.marks);
+          svgEl('rect', { class: 'fire-band', x, y: ln.L.top - 2, width: w, height: ln.L.bot - ln.L.top + 4, rx: 3 }, g);
+          txt(g, { class: 'pg-icon', x: x + w / 2, y: ln.L.top + 14, 'text-anchor': 'middle' }, '📟');
+          return { g, f };
+        });
+      });
+    };
+    const count = () => {
+      const f = {};
+      SIN_ALERTS.forEach(a => { f[a.k] = nights[night].firings[a.k].filter(x => x[0] <= minute).length; });
+      return f;
+    };
+    const draw = () => {
+      minute = Math.min(NIGHT_MIN, (clock.now - t0) / SIN_HOUR * 60);
+      const x = X(minute);
+      clip.setAttribute('x', LX.px0); clip.setAttribute('width', Math.max(0, x - LX.px0));
+      cur.setAttribute('x1', x); cur.setAttribute('x2', x);
+      clockG.setAttribute('transform', `translate(${Math.max(LX.px0 + 30, Math.min(LX.px1 - 30, x))},${M ? 18 : 32})`);
+      const hh = Math.floor(minute / 60), mm = Math.floor(minute % 60);
+      clockTxt.textContent = minute >= NIGHT_MIN ? '🌅 08:00' : `0${hh}:${mm < 10 ? '0' : ''}${mm}`;
+      lanes.forEach(ln => {
+        const on = enabled[ln.a.k];
+        ln.g.classList.toggle('off', !on);
+        ln.pages.forEach(p => {
+          const shown = p.f[0] <= minute, firing = shown && minute <= p.f[1] && minute < NIGHT_MIN;
+          p.g.classList.toggle('shown', shown);
+          p.g.classList.toggle('firing', firing && on);
+          p.g.querySelector('.pg-icon').textContent = on ? '📟' : '🔕';
+          const key = `${night}-${ln.a.k}-${p.f[0]}`;
+          if (shown && !seen[key]) {
+            seen[key] = true;
+            if (on) pop(gPop, X(p.f[0]), ln.L.top - 4, ln.a.k === 'sym' ? '📟 ¡usuarios!' : '📟', C.err);
+          }
+        });
+      });
+      const f = count(), cause = ['cpu', 'mem', 'rep'].reduce((s, k) => s + (enabled[k] ? f[k] : 0), 0);
+      const sym = enabled.sym ? f.sym : 0, total = cause + sym;
+      upd({ total, cause, sym });
+      face.textContent = total === 0 ? '😴' : total < 3 ? '😪' : total < 5 ? '😩' : '🧟';
+      pages.textContent = total ? `${'📟'.repeat(total)}  te despertaron ${total} ${total === 1 ? 'vez' : 'veces'}` : 'durmiendo…';
+    };
+    clock.onTick = draw;
+
+    const restart = () => { t0 = clock.now; seen = {}; drawNight(); draw(); };
+    seg(slide, 'night', v => { night = v; restart(); });
+    boxes.forEach(b => b.addEventListener('change', () => { enabled[b.dataset.alert] = b.checked; draw(); }));
+    on(slide, '[data-act=reset]', restart);
+    restart();
+    return {
+      start: () => clock.start(), stop: () => clock.stop(), ff: sec => ffClock(clock, sec),
+      state: () => {
+        const fired = count();
+        const total = SIN_ALERTS.reduce((s, a) => s + (enabled[a.k] ? fired[a.k] : 0), 0);
+        return { night, minute, enabled: Object.assign({}, enabled), fired, total };
+      }
+    };
+  };
+
+  /* ---------- 12. SLO: cuánto fallar está permitido ---------- */
+
+  // Un SLO sobre los últimos 30 días (ventana móvil), y un mes comprimido a SLO_DAY s de simulación por día, en pasos
+  // de una hora de juego con SLO_PER_HOUR checkouts. Los fallidos salen de un acumulador (sin rachas de suerte): sano ≈ 0,04%, roto ≈ 3% (varía por día con el
+  // rng sembrado). Los tres objetivos corren a la vez sobre los mismos checkouts, cada uno con su ErrorBudget del mes, su
+  // ErrorBudget corto (SLO_SHORT h, para el burn rate) y su AlertRule: cambiar el objetivo muestra el mismo mes con otra
+  // vara, sin recalcular. Alerta por velocidad de consumo: burn rate > SLO_BURN durante 1 h (a 2× el presupuesto del mes
+  // dura 15 días). Con slo = 1, ErrorBudget pone un piso al denominador (no divide por cero).
+  const SLO_DAY = 1, SLO_DAYS = 30, SLO_PER_HOUR = 60, SLO_SHORT = 48, SLO_BURN = 2, SLO_SEED = 12;
+  const SLO_SANO = 0.0004, SLO_ROTO = 0.03, SLO_OBJ = ['99', '99.5', '99.9'];
+
+  S.slo = slide => {
+    const { svg, clock, M } = manual(slide, 'alertc');
+    const H_END = SLO_DAYS * 24;
+    const upd = hstats(slide, [['remaining', 'Presupuesto'], ['burn', 'Consumo'], ['bad', 'Fallas / permitidas']]);
+    let obj = slide.querySelector('.seg[data-group=slo] .active').dataset.v;
+    let t0, hour, acc, r, dayR, broken, breaks, firstBreak, B;
+
+    // Un mes sano antes del día 0: la ventana de 30 días arranca llena (si arrancara vacía, el permitido crecería con el
+    // tráfico y el presupuesto "se recuperaría" solo después de un incidente)
+    const fresh = () => {
+      t0 = clock.now; acc = 0; r = rng(SLO_SEED); dayR = 0; broken = false; breaks = []; firstBreak = null;
+      B = {};
+      SLO_OBJ.forEach(k => {
+        const slo = +k / 100;
+        B[k] = { month: new ErrorBudget({ slo, windowSec: H_END }), short: new ErrorBudget({ slo, windowSec: SLO_SHORT }),
+          rule: new AlertRule({ threshold: SLO_BURN, forSec: 1 }), curve: [], alerts: [], exhaustedAt: null, st: 'ok' };
+      });
+      for (hour = -H_END; hour < 0;) addHour();
+      SLO_OBJ.forEach(k => {
+        const b = B[k];
+        b.m = b.month.state(0); b.s = b.short.state(0);
+        b.curve.push([0, b.m.remainingPct]);
+      });
+    };
+    // Suma una hora de checkouts a los presupuestos de los tres objetivos
+    const addHour = () => {
+      if (hour % 24 === 0) dayR = r();
+      const rate = broken ? SLO_ROTO * (0.85 + 0.3 * dayR) : SLO_SANO * (0.6 + 0.8 * dayR);
+      acc += rate * SLO_PER_HOUR;
+      const bad = Math.floor(acc);
+      acc -= bad;
+      SLO_OBJ.forEach(k => {
+        const b = B[k];
+        for (let i = 0; i < SLO_PER_HOUR; i++) {
+          const t = hour + (i + 0.5) / SLO_PER_HOUR;
+          b.month.add(t, i >= bad);
+          if (hour >= -SLO_SHORT) b.short.add(t, i >= bad);
+        }
+      });
+      hour++;
+    };
+    const stepHour = () => {
+      addHour();
+      const end = hour;
+      SLO_OBJ.forEach(k => {
+        const b = B[k];
+        b.m = b.month.state(end); b.s = b.short.state(end);
+        const st = b.rule.step(end, b.s.burnRate);
+        if (st === 'firing' && b.st !== 'firing') b.alerts.push([end, end]);
+        if (st === 'firing') b.alerts[b.alerts.length - 1][1] = end;
+        b.st = st;
+        if (b.exhaustedAt === null && firstBreak !== null && b.m.remainingPct <= 0) b.exhaustedAt = end;
+        b.curve.push([end, b.m.remainingPct]);
+      });
+      if (broken) breaks[breaks.length - 1][1] = end;
+    };
+
+    // geometría
+    const G = M
+      ? { x0: 40, x1: 388, head: 24, barY: 44, barH: 34, py0: 110, py1: 330, gy: 372 }
+      : { x0: 64, x1: 872, head: 34, barY: 56, barH: 44, py0: 148, py1: 430, gy: 486 };
+    const X = h => G.x0 + (G.x1 - G.x0) * h / H_END;
+    const Y = v => G.py0 + (G.py1 - G.py0) * (100 - v) / 200; // de 100% (arriba) a -100% (abajo)
+    const gBg = svgEl('g', {}, svg), gBands = svgEl('g', {}, svg), gCurve = svgEl('g', {}, svg), gUi = svgEl('g', {}, svg);
+    const dayTxt = txt(gUi, { class: 'slo-day', x: G.x0 - (M ? 30 : 50), y: G.head }, '');
+    const objTxt = txt(gUi, { class: 'slo-obj', x: G.x1, y: G.head, 'text-anchor': 'end' }, '');
+    const barX = G.x0 - (M ? 30 : 50), barW = G.x1 - barX;
+    svgEl('rect', { class: 'bud-bg', x: barX, y: G.barY, width: barW, height: G.barH, rx: 10 }, gUi);
+    const barFill = svgEl('rect', { class: 'bud-fill', x: barX, y: G.barY, width: barW, height: G.barH, rx: 10 }, gUi);
+    const barTxt = txt(gUi, { class: 'bud-txt', x: barX + 14, y: G.barY + G.barH / 2 + 6 }, '');
+    for (const v of [100, 50, 0, -100]) {
+      svgEl('line', { class: v === 0 ? 'grid zero' : 'grid', x1: G.x0, x2: G.x1, y1: Y(v), y2: Y(v) }, gBg);
+      txt(gBg, { class: 'ax', x: G.x0 - 6, y: Y(v) + 4, 'text-anchor': 'end' }, `${v}%`);
+    }
+    svgEl('rect', { class: 'neg-zone', x: G.x0, y: Y(0), width: G.x1 - G.x0, height: Y(-100) - Y(0) }, gBg);
+    txt(gBg, { class: 'neg-label', x: G.x1 - 8, y: Y(0) + 18, 'text-anchor': 'end' }, 'presupuesto agotado');
+    for (let d = 0; d <= SLO_DAYS; d += M ? 10 : 5) txt(gBg, { class: 'ax', x: X(d * 24), y: G.py1 + 18, 'text-anchor': d === SLO_DAYS ? 'end' : d ? 'middle' : 'start' }, `día ${d}`);
+    txt(gBg, { class: 'ax-title', x: G.x0, y: G.py0 - 10 }, 'presupuesto restante a lo largo del mes');
+    const curve = svgEl('polyline', { class: 'series budget' }, gCurve);
+    const now = svgEl('line', { class: 'cursor', y1: G.py0, y2: G.py1 }, gCurve);
+    // velocidad de consumo
+    const burnTxt = txt(gUi, { class: 'burn-txt', x: barX, y: G.gy }, '');
+    const lastsTxt = txt(gUi, { class: 'lasts-txt', x: barX, y: G.gy + (M ? 22 : 28) }, '');
+    const pill = svgEl('g', { class: 'pill', transform: `translate(${G.x1},${G.gy + (M ? 48 : 4)})` }, gUi);
+    svgEl('rect', { x: M ? -220 : -260, y: -17, width: M ? 220 : 260, height: 32, rx: 16 }, pill);
+    const pillTxt = txt(pill, { x: M ? -110 : -130, y: 5, 'text-anchor': 'middle' }, '');
+
+    const pct = v => `${comma(v, Math.abs(v) < 10 && v % 1 ? 1 : 0)}%`;
+    const draw = () => {
+      const b = B[obj], rem = b.m.remainingPct, burn = b.s.burnRate, firing = b.st === 'firing';
+      dayTxt.textContent = hour >= H_END ? `Día 30 de 30 · fin del mes` : `Día ${Math.floor(hour / 24) + 1} de ${SLO_DAYS}`;
+      objTxt.textContent = `objetivo ${comma(+obj, obj.includes('.') ? 1 : 0)}%${broken ? ' · 💥 Pagos roto' : ''}`;
+      barFill.setAttribute('width', barW * Math.max(0, rem) / 100);
+      barFill.setAttribute('class', `bud-fill ${rem > 50 ? 'ok' : rem > 0 ? 'warn' : 'out'}`);
+      barTxt.textContent = rem > 0 ? `${M ? 'Presupuesto' : 'Presupuesto de error'}: queda ${pct(rem)}` : '⛔ Presupuesto agotado';
+      gBands.innerHTML = '';
+      breaks.forEach(([a, z]) => svgEl('rect', { class: 'broken-band', x: X(a), y: G.py0, width: Math.max(2, X(z) - X(a)), height: G.py1 - G.py0 }, gBands));
+      b.alerts.forEach(([a, z]) => {
+        svgEl('rect', { class: 'hit-mark', x: X(a), y: G.py0 - 2, width: Math.max(4, X(z) - X(a)), height: 7, rx: 2 }, gBands);
+      });
+      curve.setAttribute('points', pts(b.curve, X, Y));
+      now.setAttribute('x1', X(hour)); now.setAttribute('x2', X(hour));
+      burnTxt.textContent = `Velocidad de consumo (últimas ${SLO_SHORT} h): ${comma(burn, burn < 10 ? 2 : 1)}×`;
+      lastsTxt.textContent = burn < 0.05 ? 'a este ritmo, el presupuesto casi no se gasta'
+        : SLO_DAYS / burn > 60 ? 'a este ritmo, el presupuesto alcanza de sobra'
+        : `a este ritmo, el presupuesto del mes dura ${SLO_DAYS / burn >= 2 ? `${Math.round(SLO_DAYS / burn)} días` : `${Math.max(1, Math.round(SLO_DAYS * 24 / burn))} h`}`;
+      gUi.classList.toggle('alerting', firing);
+      pill.setAttribute('class', `pill ${firing ? 'firing' : 'ok'}`);
+      pillTxt.textContent = firing ? `🔔 Consumo rápido (> ${SLO_BURN}×)` : `✓ Sin alerta (avisa con > ${SLO_BURN}×)`;
+      upd({ remaining: rem > 0 ? pct(rem) : 'agotado', burn: `${comma(burn, burn < 10 ? 2 : 1)}×`, bad: `${b.m.bad} / ${comma(b.m.allowed, b.m.allowed % 1 ? 1 : 0)}` });
+    };
+    let drawn = -1;
+    clock.onTick = () => {
+      const target = Math.min(H_END, Math.floor((clock.now - t0) / SLO_DAY * 24));
+      while (hour < target) stepHour();
+      if (hour !== drawn) { drawn = hour; draw(); }
+    };
+
+    seg(slide, 'slo', v => { obj = v; showModeIn(slide, v); draw(); });
+    on(slide, '[data-act=break]', () => {
+      if (broken || hour >= H_END) return;
+      broken = true; breaks.push([hour, hour]);
+      if (firstBreak === null) firstBreak = hour;
+      draw();
+    });
+    on(slide, '[data-act=heal]', () => { broken = false; draw(); });
+    on(slide, '[data-act=reset]', () => { fresh(); drawn = -1; draw(); });
+    fresh();
+    draw();
+    return {
+      start: () => clock.start(), stop: () => clock.stop(), ff: sec => ffClock(clock, sec),
+      state: () => {
+        const b = B[obj];
+        return { slo: +obj, day: hour / 24, broken, burnRate: b.s.burnRate, remainingPct: b.m.remainingPct,
+          alert: b.st === 'firing', bad: b.m.bad, allowed: b.m.allowed,
+          exhaustedAfter: b.exhaustedAt === null ? null : (b.exhaustedAt - firstBreak) / 24 };
+      }
+    };
+  };
+
   window.Scenes = S;
 })();

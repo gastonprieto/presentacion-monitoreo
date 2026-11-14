@@ -131,6 +131,21 @@ test('obs: presupuesto de error', async page => {
   check(r.remainingPct <= 0 && r.remainingPct >= -100, `remaining ${r.remainingPct}`);
 });
 
+test('obs: presupuesto con objetivo 100% no divide por cero', async page => {
+  await open(page, 0);
+  const r = await engine(page, () => {
+    const b = new window.ObsKit.ErrorBudget({ slo: 1, windowSec: 100 });
+    b.add(1, true);
+    const sano = b.state(2);
+    b.add(1.5, false);
+    const roto = b.state(2);
+    return { sano, roto, fin: [sano.burnRate, roto.burnRate].every(Number.isFinite) };
+  });
+  check(r.fin, `burnRate no finito: ${JSON.stringify(r)}`);
+  check(r.sano.burnRate === 0 && r.sano.remainingPct === 100, JSON.stringify(r.sano));
+  check(r.roto.burnRate > 0 && r.roto.remainingPct === -100, JSON.stringify(r.roto));
+});
+
 /* ---------- ObsKit: reacciones automáticas ---------- */
 
 test('obs: crash loop con backoff', async page => {
@@ -824,7 +839,8 @@ test('widget: cascada resalta el más largo sin contar Órdenes aunque no sea el
 /* ---------- escenas: el problema y las métricas ---------- */
 
 // Índices de slide (0-based)
-const SL = { sinsenales: 1, preguntas: 2, metricas: 3, percentiles: 4, doradas: 5, logs: 6, centralizar: 7, trazas: 8, tresjuntas: 9 };
+const SL = { sinsenales: 1, preguntas: 2, metricas: 3, percentiles: 4, doradas: 5, logs: 6, centralizar: 7, trazas: 8, tresjuntas: 9,
+  umbral: 10, sintoma: 11, slo: 12 };
 
 // Mueve un slider de la slide y dispara 'input'
 const SLIDE_INPUT = `(sec, sel, v) => { const r = sec.querySelector(sel); r.value = v; r.dispatchEvent(new Event('input')); }`;
@@ -1053,6 +1069,93 @@ test('escena tresjuntas: las migas vuelven atrás', async page => {
     return { a, b, logsHidden, c: sc.state().step };
   });
   check(r.a === 'logs' && r.b === 'trace' && r.logsHidden && r.c === 'metric', JSON.stringify(r));
+});
+
+/* ---------- escenas: alertas y SLO ---------- */
+
+test('escena umbral: hay un punto medio', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.umbral, `(sec, SI) => {
+    const sc = sec._scene, thr = sec.querySelector('input.thr');
+    const marks = () => ({ fp: sec.querySelectorAll('svg.sim .fp-mark').length, miss: sec.querySelectorAll('svg.sim .miss-mark').length, hit: sec.querySelectorAll('svg.sim .hit-mark').length });
+    const cells = () => [...sec.querySelectorAll('.hstats b')].map(b => b.textContent);
+    const init = Object.assign(sc.state(), marks(), { cells: cells() });
+    eval(SI)(sec, 'input.thr', thr.min);
+    const low = Object.assign(sc.state(), marks());
+    eval(SI)(sec, 'input.thr', thr.max);
+    const high = Object.assign(sc.state(), marks());
+    eval(SI)(sec, 'input.thr', thr.defaultValue);
+    sec.querySelector('.seg[data-group=win] [data-v="0"]').click();
+    const w0 = sc.state();
+    sec.querySelector('.seg[data-group=win] [data-v="5"]').click();
+    const w5 = sc.state();
+    sc.ff(40);
+    return { init, low, high, w0, w5, live: sc.state().live };
+  }`, SLIDE_INPUT);
+  const tri = s => `${s.caught}/${s.missed}/${s.falsePos}`;
+  check(tri(r.init) === '1/0/0', `inicial (umbral ${r.init.threshold}, ventana ${r.init.forMin}): ${tri(r.init)}`);
+  check(r.init.hit === 1 && r.init.fp === 0 && r.init.miss === 0, `marcas iniciales: ${JSON.stringify(r.init)}`);
+  check(r.init.cells.slice(0, 3).join() === '1,0,0', `contadores: ${r.init.cells}`);
+  check(r.low.falsePos >= 3 && r.low.fp === r.low.falsePos, `umbral bajo: ${JSON.stringify(r.low)}`);
+  check(r.high.missed >= 1 && r.high.miss === r.high.missed, `umbral alto: ${JSON.stringify(r.high)}`);
+  check(r.w0.falsePos >= 3 && r.w0.caught === 1, `sin ventana los picos suenan: ${JSON.stringify(r.w0)}`);
+  check(r.w5.caught === 1 && r.w5.delay > r.init.delay, `ventana larga avisa más tarde: ${r.init.delay} → ${r.w5.delay}`);
+  check(['ok', 'pending', 'firing'].includes(r.live), `estado en vivo: ${r.live}`);
+});
+
+test('escena sintoma: las de causa hacen ruido', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.sintoma, sec => {
+    const sc = sec._scene;
+    sc.ff(40);
+    const calm = sc.state();
+    sec.querySelector('.seg[data-group=night] [data-v=incident]').click();
+    const start = sc.state();
+    sc.ff(40);
+    const inc = sc.state();
+    sec.querySelectorAll('input[data-alert]').forEach(cb => {
+      if (cb.dataset.alert !== 'sym') { cb.checked = false; cb.dispatchEvent(new Event('change')); }
+    });
+    const symOnly = sc.state();
+    const shown = +sec.querySelector('.hstats [data-f=total]').textContent;
+    return { calm, start, inc, symOnly, shown };
+  });
+  const f = r.calm.fired;
+  check(f.cpu > 0 && f.mem > 0 && f.rep > 0, `noche tranquila, causas: ${JSON.stringify(f)}`);
+  check(f.sym === 0, `noche tranquila, síntoma: ${f.sym}`);
+  check(r.calm.total === f.cpu + f.mem + f.rep, `total ${r.calm.total} vs ${JSON.stringify(f)}`);
+  check(r.start.total === 0, `la noche nueva no arranca en cero: ${r.start.total}`);
+  check(r.inc.fired.sym >= 1, `con incidente, síntoma: ${JSON.stringify(r.inc.fired)}`);
+  check(r.symOnly.total === r.inc.fired.sym && r.shown === r.symOnly.total, `sólo síntoma: ${JSON.stringify(r.symOnly)} (muestra ${r.shown})`);
+});
+
+test('escena slo: romper acelera el consumo', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.slo, sec => {
+    const sc = sec._scene;
+    const run = v => {
+      sec.querySelector(`.seg[data-group=slo] [data-v="${v}"]`).click();
+      sec.querySelector('[data-act=reset]').click();
+      sc.ff(8);
+      const sano = sc.state();
+      sec.querySelector('[data-act=break]').click();
+      sc.ff(3);
+      const roto = sc.state();
+      sc.ff(25);
+      return { sano, roto, end: sc.state() };
+    };
+    return { s999: run('99.9'), s99: run('99'), s995: run('99.5') };
+  });
+  for (const k of ['s99', 's995', 's999']) {
+    const x = r[k];
+    check(x.sano.burnRate > 0, `${k}: el sano no consume nada (${x.sano.burnRate})`);
+    check(x.roto.burnRate > 5 * x.sano.burnRate, `${k}: burnRate ${x.sano.burnRate} → ${x.roto.burnRate}`);
+    check(x.sano.alert === false && x.roto.alert === true, `${k}: alerta ${x.sano.alert} → ${x.roto.alert}`);
+  }
+  check(r.s999.end.exhaustedAfter !== null, `99,9 no se agotó: ${JSON.stringify(r.s999.end)}`);
+  check(r.s99.end.exhaustedAfter === null || r.s999.end.exhaustedAfter < r.s99.end.exhaustedAfter,
+    `se agota: 99,9 a los ${r.s999.end.exhaustedAfter} d, 99 a los ${r.s99.end.exhaustedAfter} d`);
+  check(r.s999.sano.remainingPct < r.s99.sano.remainingPct, `restante sano: 99,9 ${r.s999.sano.remainingPct}, 99 ${r.s99.sano.remainingPct}`);
 });
 
 /* ---------- runner ---------- */
