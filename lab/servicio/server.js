@@ -5,7 +5,8 @@
 // Fallas para romper (se guardan en el volumen compartido /estado, así todas las réplicas las ven
 // y sobreviven a un reinicio):
 //   POST /romper?servicio=pagos&modo=lento|colgado|crash|cpu   ·   POST /arreglar?servicio=pagos
-//   lento: en Pagos tarda la consulta (y retiene la conexión), en Envíos la respuesta. cpu: sólo Pagos.
+//   lento: en Pagos cada cobro tarda más en la caja (una fila que se bloquea), en Envíos la respuesta.
+//   cpu: sólo Pagos.
 const express = require('express');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -15,6 +16,10 @@ const SERVICIO = process.env.SERVICIO || 'ordenes';
 const SIGUIENTE = process.env.SIGUIENTE || '';
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 2000);
 const POOL = Number(process.env.POOL || 4);
+const POOL_ESPERA_MS = Number(process.env.POOL_ESPERA_MS || 1000); // espera máxima por una conexión libre
+const LENTO_S = Number(process.env.LENTO_S || 0.13);              // con lento, lo que tarda cada cobro en la caja
+const LENTO_RAMPA_S = Number(process.env.LENTO_RAMPA_S || 60);    // en cuántos segundos llega a LENTO_S
+const NORMAL_S = 0.01;
 const ESTADO = '/estado';
 const MODOS = ['lento', 'colgado', 'crash', 'cpu'];
 const replica = os.hostname().slice(0, 6);
@@ -35,6 +40,9 @@ function log(nivel, mensaje, campos = {}) {
 // ---------- Fallas ----------
 const archivoModo = (s) => `${ESTADO}/${s}.modo`;
 const leerModo = () => { try { return fs.readFileSync(archivoModo(SERVICIO), 'utf8').trim(); } catch { return ''; } };
+// Desde cuándo está roto: la fecha del archivo (la misma para todas las réplicas).
+const desdeModo = () => { try { return fs.statSync(archivoModo(SERVICIO)).mtimeMs; } catch { return Date.now(); } };
+let modoDesde = desdeModo();
 let modo = leerModo();
 let colgado = false; // una vez colgado, el proceso no vuelve solo: hay que reiniciarlo
 
@@ -44,7 +52,8 @@ if (modo === 'crash') {
   setTimeout(() => process.exit(1), 500);
 }
 setInterval(() => {
-  modo = leerModo();
+  const nuevo = leerModo();
+  if (nuevo !== modo) { modo = nuevo; modoDesde = desdeModo(); }
   if (modo === 'colgado') colgado = true;
   if (modo === 'crash') { log('error', 'se cae el proceso (modo crash)'); process.exit(1); }
 }, 500).unref();
@@ -65,7 +74,7 @@ if (SERVICIO === 'pagos') {
   const { Pool } = require('pg');
   // connectionTimeoutMillis: cuánto espera un pedido por una conexión libre antes de fallar
   // (menos que el timeout de Órdenes, así el 503 de Pagos llega antes de que Órdenes se canse).
-  pool = new Pool({ max: POOL, connectionTimeoutMillis: 1000 });
+  pool = new Pool({ max: POOL, connectionTimeoutMillis: POOL_ESPERA_MS });
   pool.on('error', (e) => log('error', 'error en el pool', { error: e.message }));
   const gauge = (nombre, descripcion, f) =>
     meter.createObservableGauge(nombre, { description: descripcion }).addCallback((r) => r.observe(f()));
@@ -136,15 +145,27 @@ if (SERVICIO === 'pagos') {
       log('error', `sin conexión a la base: ${e.message}`, { pedido, esperando: pool.waitingCount });
       return res.status(503).json({ error: e.message });
     }
+    let fallo;
     try {
-      // lento: la consulta tarda 1,5 s y retiene la conexión → el pool se llena.
-      await cliente.query('SELECT pg_sleep($1)', [modo === 'lento' ? 1.5 : 0.02]);
+      // Cada cobro suma a la misma fila (la caja del día): el UPDATE la bloquea hasta el COMMIT,
+      // así que los cobros pasan de a uno, sin importar cuántas réplicas o conexiones haya.
+      // Normal: 10 ms por cobro (100 por segundo). Lento: crece de a poco hasta LENTO_S (con 0,13 s,
+      // unos 7,7 por segundo): primero sube la latencia y, cuando no da abasto, aparecen los errores.
+      const demora = modo === 'lento'
+        ? Math.min(LENTO_S, NORMAL_S + (LENTO_S - NORMAL_S) * (Date.now() - modoDesde) / 1000 / LENTO_RAMPA_S)
+        : NORMAL_S;
+      await cliente.query('BEGIN');
+      await cliente.query('UPDATE caja SET total = total + $1, cobros = cobros + 1 WHERE id = 1', [monto]);
+      await cliente.query('SELECT pg_sleep($1)', [demora]);
       await cliente.query('INSERT INTO pagos (pedido, monto) VALUES ($1, $2)', [pedido, monto]);
+      await cliente.query('COMMIT');
     } catch (e) {
+      fallo = e;
+      await cliente.query('ROLLBACK').catch(() => {});
       log('error', 'error de la base', { pedido, error: e.message });
       return res.status(500).json({ error: e.message });
     } finally {
-      cliente.release();
+      cliente.release(fallo);
     }
     try {
       const envio = await llamar('/enviar', { pedido });

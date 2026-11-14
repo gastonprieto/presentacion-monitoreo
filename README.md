@@ -34,7 +34,7 @@ Hace falta Docker con Compose. Todo junto usa alrededor de 1 GB de RAM (medido c
 | Órdenes | `localhost:8080/checkout` | La puerta de la tienda. Llama a Pagos con un timeout de 2 s (`TIMEOUT_MS`) |
 | Pagos | interno | Cobra en Postgres con un pool de 4 conexiones (`POOL`) y llama a Envíos. Tiene `healthcheck` y `restart: on-failure` |
 | Envíos | interno | Contesta en 10 a 40 ms |
-| Postgres | interno | `max_connections=10`: a Pagos le quedan 7 (3 son del superusuario) |
+| Postgres | interno | Cada cobro suma a la misma fila (la caja del día): el `UPDATE` la bloquea hasta el `COMMIT` y la base cobra de a uno, con una capacidad fija. `max_connections=20` (a Pagos le quedan 17) |
 | OpenTelemetry Collector | interno | Recibe trazas, métricas y logs por OTLP y los reparte |
 | Grafana | `localhost:3000` | Dashboard **Tienda** (las cuatro señales doradas), Explore para logs y trazas. Sin login |
 | Prometheus | `localhost:9090` | Métricas y reglas de alerta (`lab/prometheus/rules.yml`) |
@@ -74,14 +74,14 @@ curl -s -X POST "localhost:8080/arreglar"
 
 Con la carga corriendo y el dashboard **Tienda** abierto (`localhost:3000`, es la página de inicio; se actualiza cada 5 s).
 
-**Todo anda… ¿o no?** Rompé Pagos y mirá sólo la terminal de la carga o el `curl`: los pedidos tardan 1 o 2 s y fallan. Sin señales, eso es todo lo que sabrías.
+**Todo anda… ¿o no?** Rompé Pagos y mirá sólo la terminal de la carga o el `curl`. Con `lento`, cada cobro tarda cada vez más en la caja (de 10 ms a 130 ms en un minuto: `LENTO_S` y `LENTO_RAMPA_S` en el compose). Durante unos 50 s todo sale bien, sólo más lento. Cuando la caja ya no da abasto (cobra ~7,7 por segundo y llegan 10), fallan cerca del 30% de los pedidos. Sin señales, eso es todo lo que sabrías.
 
 ```bash
 curl -s -X POST "localhost:8080/romper?modo=lento"
-curl -s -w " %{http_code} %{time_total}s\n" localhost:8080/checkout    # "fallido" · 502 a 1 s o 504 a 2 s
+curl -s -w " %{http_code} %{time_total}s\n" localhost:8080/checkout    # pasado el minuto: 200 a ~1,6 s, o "fallido" · 502 a 1 s
 ```
 
-**Métricas, percentiles y señales doradas.** El dashboard tiene una fila por señal y una línea por servicio: tráfico (pedidos/s, un contador convertido en tasa), errores (% de 5xx, con la línea del 5% de la alerta), latencia (p95 y p50 de un histograma) y saturación (el pool de Pagos: cuando llega al 100% empiezan a esperar pedidos y después los errores). Con `lento` el p95 pasa de ~80 ms a más de 2 s. Las mismas consultas se pueden escribir en Prometheus (`localhost:9090`):
+**Métricas, percentiles y señales doradas.** El dashboard tiene una fila por señal y una línea por servicio: tráfico (pedidos/s, un contador convertido en tasa), errores (% de 5xx, con la línea del 5% de la alerta), latencia (p95 y p50 de un histograma) y saturación (el pool de Pagos: cuando llega al 100% empiezan a esperar pedidos y después los errores). Abajo están la CPU y la espera en la base. Con `lento` se ve el orden de la slide: primero sube la latencia sin errores (en la prueba, el p95 de Órdenes pasó de 0,07 s a 0,65 s en 50 s), después el pool llega al 100%, empiezan a esperar pedidos y aparecen los errores (~30%). El p95 queda en ~2,4 s: los pedidos más lentos se cortan en los 2 s del timeout de Órdenes. Pagos marca un poco menos de errores que Órdenes porque algunos cobros terminan después de que Órdenes ya se cansó de esperar. Las mismas consultas se pueden escribir en Prometheus (`localhost:9090`):
 
 ```promql
 histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket[30s])))
@@ -99,11 +99,11 @@ docker compose logs pagos --tail 5          # los de una sola pieza, en JSON con
 {service_name="pagos"} | json | nivel="error"
 ```
 
-**Trazas: seguir un pedido entre servicios.** En Explore → Tempo → Search se listan las trazas (filtrables por servicio o duración); cada una muestra la cascada `GET /checkout` (Órdenes) → `POST /pagar` (Pagos, con `pg-pool.connect` y las consultas) → `POST /enviar` (Envíos). Con `lento`, el span que se come el tiempo es `pg-pool.connect`: esperar una conexión libre. Las trazas tardan unos 10 s en aparecer.
+**Trazas: seguir un pedido entre servicios.** En Explore → Tempo → Search se listan las trazas (filtrables por servicio o duración); cada una muestra la cascada `GET /checkout` (Órdenes) → `POST /pagar` (Pagos, con `pg-pool.connect` y las consultas) → `POST /enviar` (Envíos). Con `lento`, el tiempo se va en `pg-pool.connect` (esperar una conexión libre del pool) y en el `UPDATE` (esperar el turno en la caja). Por ejemplo, en un pedido de 1,7 s: 920 ms y 580 ms. Las trazas tardan unos 10 s en aparecer.
 
 **De la métrica a la traza y al log.** En un log de Loki, el campo `trace_id` tiene un link a su traza en Tempo; en una traza, cada span tiene un botón de logs que abre los de ese pedido.
 
-**Alertas: cuándo avisar y por síntoma, no por causa.** Hay dos reglas en `lab/prometheus/rules.yml`, las dos con `for: 1m` (la ventana): `CheckoutErrores` (**síntoma**: más del 5% de los checkouts fallan) y `PagosCPUAlta` (**causa**: Pagos usa más del 50% de un núcleo). Con `lento`, en menos de 2 minutos `CheckoutErrores` pasa de *pending* a *firing* en Prometheus (`localhost:9090/alerts`) y aparece en Alertmanager (`localhost:9093`). Con `cpu`, Pagos quema 60 ms de CPU por pedido pero contesta bien: suena `PagosCPUAlta` y `CheckoutErrores` no, porque el usuario no sufre.
+**Alertas: cuándo avisar y por síntoma, no por causa.** Hay dos reglas en `lab/prometheus/rules.yml`, las dos con `for: 1m` (la ventana): `CheckoutErrores` (**síntoma**: más del 5% de los checkouts fallan) y `PagosCPUAlta` (**causa**: Pagos usa más del 50% de un núcleo). Con `lento`, unos 2 minutos después de romper (en la prueba, 129 s: ~60 s de rampa hasta que aparecen los errores, más el `for: 1m`) `CheckoutErrores` pasa de *pending* a *firing* en Prometheus (`localhost:9090/alerts`) y aparece en Alertmanager (`localhost:9093`). Con `cpu`, Pagos quema 60 ms de CPU por pedido pero contesta bien: suena `PagosCPUAlta` y `CheckoutErrores` no, porque el usuario no sufre.
 
 ```bash
 curl -s -X POST "localhost:8080/arreglar"; curl -s -X POST "localhost:8080/romper?modo=cpu"
@@ -141,13 +141,20 @@ curl -s -X POST "localhost:8080/arreglar"    # en el próximo intento arranca bi
 
 **Circuit breaker.** Órdenes tiene timeout (2 s, `TIMEOUT_MS`) pero no breaker: con `colgado` cada pedido espera los 2 s completos y falla con 504. Un breaker dejaría de llamar a Pagos y fallaría al instante.
 
-**Límites: cuando lo automático empeora las cosas.** Con `lento`, sumar réplicas de Pagos no arregla nada: la base tiene un tope de conexiones. Con 3 réplicas el pool total es 12, pero la base sólo le da 7 a Pagos; las otras conexiones se rechazan y sigue fallando más de la mitad de los checkouts.
+**Límites: cuando lo automático empeora las cosas.** Con `lento`, sumar réplicas de Pagos empeora las cosas. La caja cobra de a uno, así que más réplicas no cobran más rápido: sólo meten más conexiones a esperar en la base (de 4 a 12) y la fila se hace más larga. Más pedidos superan los 2 s y Órdenes los da por fallidos, aunque Pagos los termine de cobrar igual (trabajo tirado).
+
+| Con `lento` (10 pedidos/s) | 1 réplica | 3 réplicas |
+|---|---|---|
+| Errores de checkout (Órdenes) | ~30% | ~55% |
+| Checkouts que salen bien | ~7 por segundo | ~4,5 por segundo |
+| Espera por la caja (`UPDATE`), p50 | ~0,37 s | ~0,9 s |
+| Espera por la caja (`UPDATE`), p95 | ~0,9 s | más de 4 s |
+| Conexiones de Pagos en la base | 4 | 12 |
 
 ```bash
-curl -s -X POST "localhost:8080/romper?modo=lento"
-docker compose up -d --scale pagos=3
-docker compose logs pagos --since 20s | grep -c "remaining connection slots"     # la base rechaza conexiones
-docker compose exec db psql -U postgres -d tienda -c "select count(*) from pg_stat_activity where usename='tienda'"    # 7
+curl -s -X POST "localhost:8080/romper?modo=lento"     # esperar un par de minutos con la carga
+docker compose up -d --scale pagos=3                   # en el dashboard: los errores suben y el panel «Base» también
+docker compose exec db psql -U postgres -d tienda -c "select wait_event_type, wait_event, count(*) from pg_stat_activity where usename='tienda' group by 1,2"    # casi todas esperando un Lock
 docker compose up -d --scale pagos=1
 ```
 
@@ -157,11 +164,11 @@ docker compose up -d --scale pagos=1
 
 | Qué romper | Comando | Qué se ve | Volver |
 |---|---|---|---|
-| Pagos lento | `curl -X POST "localhost:8080/romper?modo=lento"` | La consulta tarda 1,5 s y retiene la conexión: pool al 100%, pedidos esperando, p95 > 2 s, Órdenes da 504/502 y en menos de 2 min suena `CheckoutErrores` | `curl -X POST localhost:8080/arreglar` |
+| Pagos lento | `curl -X POST "localhost:8080/romper?modo=lento"` | La caja tarda cada vez más (rampa de 1 min): primero sube la latencia, después el pool llega al 100% y fallan ~30% de los checkouts; a los ~2 min suena `CheckoutErrores` | `curl -X POST localhost:8080/arreglar` |
 | Pagos colgado | `curl -X POST "localhost:8080/romper?modo=colgado"` | No contesta ni `/salud`: a los ~15 s `(unhealthy)`, pero Compose no lo reinicia | `arreglar` y `docker compose restart pagos` |
 | Bug al arrancar | `curl -X POST "localhost:8080/romper?modo=crash"` | Crash loop: `Restarting`, `RestartCount` que crece y esperas cada vez más largas | `curl -X POST localhost:8080/arreglar` (arranca solo en el próximo intento) |
 | CPU alta sin impacto | `curl -X POST "localhost:8080/romper?modo=cpu"` | Suena `PagosCPUAlta` (causa) y no `CheckoutErrores` (síntoma) | `curl -X POST localhost:8080/arreglar` |
-| Escalar con la base lenta | `lento` + `docker compose up -d --scale pagos=3` | La base rechaza conexiones (`remaining connection slots…`): más réplicas no arreglan | `docker compose up -d --scale pagos=1` |
+| Escalar con la base lenta | `lento` + `docker compose up -d --scale pagos=3` | Peor: los errores pasan de ~30% a ~55% y la espera en la base más que se duplica | `docker compose up -d --scale pagos=1` |
 | La base | `docker compose stop db` | Pagos falla todos los cobros; el healthcheck sigue verde porque `/salud` no mira la base (¿está vivo? no es ¿está listo?) | `docker compose start db` |
 | Envíos | `docker compose stop envios` | Pagos cobra pero falla al llamar a Envíos: en la traza, el error está en el último salto | `docker compose start envios` |
 | El collector | `docker compose stop collector` | La tienda sigue andando pero el dashboard se queda sin datos: el monitoreo también puede caerse | `docker compose start collector` |

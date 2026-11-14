@@ -35,6 +35,9 @@ services:
       OTEL_SERVICE_NAME: pagos
       SIGUIENTE: http://envios:3000
       POOL: "4"                   # conexiones a Postgres por réplica
+      POOL_ESPERA_MS: "1000"      # cuánto espera un pedido por una conexión libre del pool
+      LENTO_S: "0.13"             # modo lento: cada cobro tarda esto en la caja (de a uno: ~7,7 por segundo)
+      LENTO_RAMPA_S: "60"         # …y llega de a poco, en 60 s (primero sube la latencia, después los errores)
       PGHOST: db
       PGUSER: tienda
       PGPASSWORD: tienda
@@ -58,8 +61,9 @@ services:
 
   db:
     image: postgres:18.7-alpine
-    # 10 conexiones en total, 3 reservadas para el superusuario: a Pagos (usuario tienda) le quedan 7.
-    command: ["postgres", "-c", "max_connections=10"]
+    # 20 conexiones en total, 3 reservadas para el superusuario: a Pagos (usuario tienda) le quedan 17
+    # (alcanzan para 3 réplicas × POOL 4; con 5 réplicas ya no).
+    command: ["postgres", "-c", "max_connections=20"]
     environment: { POSTGRES_PASSWORD: tienda, POSTGRES_DB: tienda }
     volumes: ["./lab/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
     healthcheck:

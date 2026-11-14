@@ -575,6 +575,63 @@
       ]
     },
     {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Base · espera por la caja (UPDATE)",
+      "description": "Cuánto tarda el UPDATE de la caja: casi todo es esperar el bloqueo de la fila. La base cobra de a uno; con más conexiones (más réplicas de Pagos), la fila es más larga.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(db_client_operation_duration_seconds_bucket{job=\"pagos\", db_operation_name=\"UPDATE\"}[30s])))",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(db_client_operation_duration_seconds_bucket{job=\"pagos\", db_operation_name=\"UPDATE\"}[30s])))",
+          "legendFormat": "p50"
+        }
+      ]
+    },
+    {
       "id": 8,
       "type": "logs",
       "title": "Logs con error (Loki)",
@@ -584,9 +641,9 @@
         "uid": "loki"
       },
       "gridPos": {
-        "x": 12,
-        "y": 18,
-        "w": 12,
+        "x": 0,
+        "y": 26,
+        "w": 24,
         "h": 8
       },
       "options": {
