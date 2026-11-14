@@ -208,8 +208,8 @@
       this._draw();
     }
     // Arreglo del operador: se acaba la falla y las réplicas caídas arrancan de nuevo
+    // También descuelga una réplica colgada con hangReplica y levanta una que quedó caída sin supervisor.
     heal() {
-      if (this.fault === null) return;
       this.fault = null;
       this.reps.forEach(r => {
         r.hang = false;
@@ -219,12 +219,29 @@
     }
 
     // Reinicio planificado de la réplica i. Con readiness sale de la rotación y termina lo que tiene antes de
-    // parar; sin readiness se corta en el acto (lo que tenía en curso falla).
-    restartReplica(i) {
+    // parar; sin readiness se corta en el acto (lo que tenía en curso falla). { auto: true }: lo decidió una
+    // regla automática (de una escena), así que se avisa como reacción ('react' restart, 🤖).
+    restartReplica(i, { auto = false, why = 'regla' } = {}) {
       const r = this.reps[i];
       if (!r || r.draining !== false || (!r.up && !r.booting)) return;
+      if (auto) this._react('restart', { replica: r.id, why, restarts: r.restarts + 1 }, r.node);
       if (this.o.readiness && r.up) { r.draining = this.t; r.inRot = false; }
       else this._stop(r);
+      this._draw();
+    }
+
+    // Falla de una sola réplica (sin tocar this.fault): hangReplica la cuelga (el proceso sigue vivo pero no
+    // contesta; un reinicio o heal la arregla); crashReplica la tira una vez (decide su supervisor; arranca bien).
+    hangReplica(i) {
+      const r = this.reps[i];
+      if (!r || !r.up) return;
+      r.hang = true;
+      this._draw();
+    }
+    crashReplica(i) {
+      const r = this.reps[i];
+      if (!r) return;
+      this._exit(r, true);
       this._draw();
     }
 
@@ -289,13 +306,14 @@
         const pool = this.o.pool, total = pool * this.reps.length;
         this.satLog.push([this.t, total ? this.reps.reduce((a, r) => a + r.inUse, 0) / total : 0]);
         const ready = this.reps.filter(r => this._ready(r));
-        this.asLog.push([this.t, ready.length ? ready.reduce((a, r) => a + r.inUse, 0) / (pool * ready.length) : 1]);
+        // sin réplicas listas no hay métrica (el autoscaler no decide: escalar un crash loop sólo suma réplicas que se caen)
+        if (ready.length) this.asLog.push([this.t, ready.reduce((a, r) => a + r.inUse, 0) / (pool * ready.length)]);
         if (this.satLog.length > KEEP / SAT_EVERY + 50) {
           const from = this.t - KEEP;
           this.satLog = this.satLog.filter(s => s[0] > from);
           for (const k of SERVICES) this.samples[k] = this.samples[k].filter(s => s.t > from);
         }
-        if (this.asLog.length > AS_WIN / SAT_EVERY + 10) this.asLog.shift();
+        while (this.asLog.length && this.asLog[0][0] <= this.t - AS_WIN - 1) this.asLog.shift();
         this._brSync();
         for (const r of this.reps) {
           if (r.draining !== false && ((!r.pending && !r.calls.size) || this.t - r.draining >= DRAIN_MAX)) this._stop(r);
@@ -321,7 +339,13 @@
         if (this.fault === 'crash') this._exit(r, true);
         this.reps.push(r);
       }
+      // al achicar salen primero las que no están listas (caídas, arrancando, calentando), después las últimas;
       // las que se van terminan lo que tenían en curso (sus pedidos guardan la referencia)
+      if (this.reps.length > n) {
+        const order = this.reps.map((r, k) => [r, k]).sort((a, b) => this._ready(a[0]) - this._ready(b[0]) || b[1] - a[1]);
+        const out = new Set(order.slice(0, this.reps.length - n).map(x => x[0]));
+        this.reps = this.reps.filter(r => !out.has(r)).concat([...out]);
+      }
       this.reps.splice(n).forEach(r => {
         r.gone = true;
         if (r.restartTimer) r.restartTimer.dead = true;
@@ -339,7 +363,7 @@
       this.emit('react', e);
       const label = kind === 'restart' ? 'reinicio'
         : kind === 'remove' ? 'fuera'
-        : kind === 'scale' ? (detail.to > detail.from ? `+${detail.to - detail.from} réplica` : `−${detail.from - detail.to} réplica`)
+        : kind === 'scale' ? (d => `${d > 0 ? '+' : '−'}${Math.abs(d)} réplica${Math.abs(d) > 1 ? 's' : ''}`)(detail.to - detail.from)
         : BR_NAME[detail.to];
       this._pop(node || this.ordenes, `🤖 ${label}`, COL.react);
     }
@@ -458,11 +482,11 @@
     }
 
     // Métrica: `sat` (conexiones en uso / pool) promedio por réplica lista en los últimos AS_WIN s.
-    // Las réplicas nuevas tardan `startup` s en estar listas.
+    // Las réplicas nuevas tardan `startup` s en estar listas. Si ahora no hay ninguna lista, no decide.
     _scheduleScaler() {
       const step = () => {
         const a = this.scaler;
-        if (a) {
+        if (a && this.reps.some(r => this._ready(r))) {
           const from = this.t - AS_WIN;
           let sum = 0, n = 0;
           for (const [t, f] of this.asLog) if (t > from) { sum += f; n++; }
@@ -754,21 +778,33 @@
       });
       this._link(this.client, this.ordenes);
       this._link(this.ordenes, this.envios);
-      // estado del circuit breaker de Órdenes → Pagos, debajo de Órdenes
+      // estado del circuit breaker de Órdenes → Pagos: una píldora sobre el enlace (entre Órdenes y las réplicas)
       this.brText = null;
       if (this.br) {
-        const g = svgEl('g', { class: 'breaker' }, this.gNodes);
-        this.brText = svgEl('text', { x: this.ordenes.x, y: this.ordenes.y + this.ordenes.hh + (v ? 15 : 22),
-          class: 't-info', 'text-anchor': 'middle' }, g);
+        // celular: en el medio del enlace (Pagos está abajo); escritorio: el hueco entre cajas es angosto, va
+        // arriba del enlace, sobre la réplica más cercana a Órdenes
+        const O = this.ordenes, near = this.reps.map(r => r.node).sort((a, b) => Math.abs(a.y - O.y) - Math.abs(b.y - O.y))[0];
+        const x = v ? (O.x + near.x) / 2 + 6 : (O.x + O.hw + near.x - near.hw) / 2;
+        const y = v ? (O.y + O.hh + near.y - near.hh) / 2 : Math.min(O.y - O.hh, near.y - near.hh) - 20;
+        const g = this.brG = svgEl('g', { class: 'breaker', transform: `translate(${x},${y})` }, this.gNodes);
+        this.brRect = svgEl('rect', { y: -13, height: 26, rx: 13 }, g);
+        this.brText = svgEl('text', { y: 5, class: 't-info', 'text-anchor': 'middle' }, g);
         this._drawBreaker();
       }
     }
 
     _drawBreaker() {
       if (!this.brText) return;
-      const s = this.brState;
-      this.brText.textContent = `⚡ circuito ${BR_NAME[s]}`;
-      this.brText.setAttribute('fill', s === 'closed' ? COL.ok : s === 'open' ? COL.err : COL.slow);
+      const s = this.brState, col = s === 'closed' ? COL.ok : s === 'open' ? COL.err : COL.slow;
+      const label = `⚡ ${BR_NAME[s]}`;
+      if (this.brText.textContent === label) return;
+      this.brText.textContent = label;
+      this.brText.setAttribute('fill', col);
+      const w = (this.v ? 8 : 9) * label.length + 18;
+      this.brRect.setAttribute('x', -w / 2);
+      this.brRect.setAttribute('width', w);
+      this.brRect.setAttribute('stroke', col);
+      this.brG.setAttribute('class', `breaker br-${s}`);
     }
 
     _draw() {

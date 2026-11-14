@@ -495,13 +495,187 @@
   </aside>
 </section>
 
-<!-- ============ REACCIONAR SOLO ============ -->
-<section>
-  <div class="kicker">Reaccionar solo</div>
-  <h2>Reaccionar solo: autorreparación</h2>
-  <p class="lead">Slide en construcción.</p>
+<!-- ============ 13. HEALTH CHECKS ============ -->
+<section data-scene="health">
+  <div class="kicker blue">Reaccionar solo</div>
+  <h2>¿Está vivo? ¿Está listo?</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#4ade80"></i>sí</span><span><i style="background:#f87171"></i>no</span><span><i style="background:#60a5fa"></i>🤖 reacción</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Dos réplicas de Pagos. Cada segundo alguien les pregunta <b>dos cosas distintas</b>.</p>
+      <div class="seg" data-group="probe"><button type="button" data-v="live" class="active">¿vivo?</button><button type="button" data-v="ready">¿listo?</button><button type="button" data-v="both">las dos</button></div>
+      <p class="mode-text" data-mode="live">Si no contesta 2 veces seguidas, <b>se reinicia</b>. Pero el tráfico le sigue llegando mientras arranca.</p>
+      <p class="mode-text" data-mode="ready" hidden>Si no está listo, <b>sale de la rotación</b>: no le llegan pedidos, pero nadie lo reinicia.</p>
+      <p class="mode-text" data-mode="both" hidden>La de vivo <b>reinicia</b> lo colgado; la de listo <b>no le manda pedidos</b> hasta que termine de arrancar.</p>
+      <div class="actions tight">
+        <button class="btn danger" data-act="hang">⏸ Colgar Pagos 1</button>
+        <button class="btn" data-act="deploy">🐢 Deploy lento</button>
+        <button class="btn icon" data-act="heal" title="Arreglar" aria-label="Arreglar">🔧</button>
+        <button class="btn ghost icon" data-act="reset" title="Reiniciar la demo" aria-label="Reiniciar la demo">↺</button>
+      </div>
+      <div class="sstats three" data-service="checkout" data-fields="errPct,p95,n" data-window="5" data-labels="Errores,p95 checkout,Checkouts"></div>
+      <ul class="points">
+        <li class="fragment"><b>Vivo</b>: ¿el proceso contesta? Si no, reiniciarlo.</li>
+        <li class="fragment"><b>Listo</b>: ¿puede atender ahora? Si no, no mandarle pedidos.</li>
+      </ul>
+    </div>
+  </div>
   <aside class="notes">
-    A veces el sistema puede reaccionar solo: reiniciar, sacar una réplica, escalar. Pregunta para la clase: ¿qué problemas dejarían que el sistema arregle sin avisarles?
+    Hasta acá mirábamos el sistema y una persona decidía. Ahora el sistema reacciona solo. Lo más básico: preguntarle a cada réplica, cada segundo, si está bien. Pero hay dos preguntas distintas. ¿Está vivo? (si el proceso no contesta, reiniciarlo). ¿Está listo? (si todavía arranca, calienta o está trabado, no mandarle pedidos, sin reiniciarlo). En la jerga se llaman liveness y readiness. Debajo de cada réplica se ve lo que contestaría a cada pregunta.
+    Con "¿vivo?" apretar "Colgar Pagos 1": el proceso sigue ahí pero no contesta. A los 2 segundos 🤖 lo reinicia. Pero mientras arranca y calienta (5 s) los pedidos le siguen llegando y fallan. Con "¿listo?": la réplica colgada sale de la rotación y la otra atiende todo; nadie la reinicia, queda colgada hasta que alguien la arregle (🔧). Con "las dos": se reinicia y no recibe pedidos hasta estar lista. Casi ningún error.
+    "Deploy lento": se reinicia Pagos 2 con una versión que tarda 5 s en estar lista. Con sólo "¿vivo?" responde (está vivo), así que recibe pedidos y devuelve 503. Con "¿listo?" sale de la rotación hasta que termine.
+    Ojo: una sonda de vivo demasiado estricta (por ejemplo, que también mire la base de datos) reinicia réplicas sanas cuando el problema es otro. Lo vamos a ver en la última slide de esta parte.
+    Pregunta para la clase: si la base de datos se pone lenta, ¿debería fallar la pregunta "¿vivo?" de Pagos, la de "¿listo?" o ninguna?
+  </aside>
+</section>
+
+<!-- ============ 14. SUPERVISOR ============ -->
+<section data-scene="supervisor">
+  <div class="kicker blue">Reaccionar solo</div>
+  <h2>Si se cae, levantalo</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#f87171"></i>caído</span><span><i style="background:#facc15"></i>arrancando</span><span><i style="background:#60a5fa"></i>🤖 reinicio</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Un <b>supervisor</b> vigila a Pagos: si se cae, decide si lo vuelve a arrancar y cuándo.</p>
+      <div class="seg" data-group="policy"><button type="button" data-v="no">no reiniciar</button><button type="button" data-v="on-failure" class="active">si falla</button><button type="button" data-v="always">siempre</button></div>
+      <p class="mode-text" data-mode="no" hidden>Si se cae, <b>queda caído</b> hasta que alguien lo levante a mano.</p>
+      <p class="mode-text" data-mode="on-failure">Lo levanta si <b>terminó con error</b>, cada vez esperando el doble.</p>
+      <p class="mode-text" data-mode="always" hidden>Lo levanta <b>siempre</b>, aunque haya terminado bien: un servicio no debería terminar.</p>
+      <div class="actions tight">
+        <button class="btn danger" data-act="crash">💥 Una caída</button>
+        <button class="btn danger" data-act="loop">🐞 Bug al arrancar</button>
+        <button class="btn icon" data-act="heal" title="Arreglar" aria-label="Arreglar">🔧</button>
+        <button class="btn ghost icon" data-act="reset" title="Reiniciar la demo" aria-label="Reiniciar la demo">↺</button>
+      </div>
+      <div class="box tl-box">
+        <div class="label">Reinicios · espera antes de cada uno</div>
+        <div class="tl"></div>
+      </div>
+      <ul class="points">
+        <li class="fragment">Si falla al arrancar, reiniciar no lo arregla: <b>crash loop</b>.</li>
+        <li class="fragment">Esperar cada vez el doble (<b>backoff</b>) no castiga a nadie.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    El supervisor es el proceso que vigila a otro proceso: si se cae, lo vuelve a arrancar. La política dice cuándo: nunca, sólo si terminó con error, o siempre.
+    "Una caída": Pagos se cae por algo raro (se quedó sin memoria, un pedido con datos raros). Con "si falla", 🤖 lo vuelve a arrancar a 1 s y sigue andando. El usuario casi ni se entera. Con "no reiniciar" queda caído hasta que alguien apriete 🔧.
+    "Bug al arrancar": la versión nueva falla apenas arranca (falta una variable de configuración, por ejemplo). Reiniciar no sirve: se cae de nuevo. El supervisor espera 1 s, 2 s, 4 s, 8 s, 16 s: cada vez el doble, hasta un tope. A eso se le dice crash loop con backoff. Mirar la línea de tiempo: las barras crecen. Si estuvo sano 10 s seguidos, la espera vuelve a 1 s.
+    El supervisor reacciona, pero no arregla: un reinicio esconde el problema si nadie mira cuántas veces reinició. Esa cuenta es una métrica que vale la pena alertar.
+    Pregunta para la clase: ¿por qué no reiniciar enseguida, sin esperar? ¿A quién le hace daño un proceso que arranca y se cae cien veces por minuto?
+  </aside>
+</section>
+
+<!-- ============ 15. AUTOSCALING ============ -->
+<section data-scene="autoscaling">
+  <div class="kicker blue">Reaccionar solo</div>
+  <h2>Sumar réplicas con la carga</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#facc15"></i>calentando</span><span><i style="background:#2dd4bf"></i>conexión en uso</span><span><i style="background:#60a5fa"></i>🤖 escala</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">🤖 Cada segundo mira el <b>uso del pool</b> de Pagos y decide cuántas réplicas hacen falta (de 1 a 6).</p>
+      <div class="box three">
+        <div class="slider-row"><span class="sl-name">Tráfico</span><input class="rate" type="range" min="1" max="24" step="1" value="4"><span class="rate-out">4 pedidos/s</span></div>
+        <div class="slider-row"><span class="sl-name">Umbral</span><input class="target" type="range" min="20" max="90" step="10" value="70"><span class="rate-out target-out">70%</span></div>
+        <div class="slider-row"><span class="sl-name">Enfriar</span><input class="cooldown" type="range" min="0" max="20" step="1" value="10"><span class="rate-out cooldown-out">10 s</span></div>
+      </div>
+      <div class="chart-box as-box"><canvas class="as-chart"></canvas></div>
+      <div class="actions as-row"><p class="as-out"></p><button class="btn ghost icon" data-act="reset" title="Volver a empezar" aria-label="Volver a empezar">↺</button></div>
+      <ul class="points">
+        <li class="fragment">Una réplica nueva <b>tarda en estar lista</b>: el autoscaler reacciona tarde.</li>
+        <li class="fragment">Sin enfriamiento, suma y saca sin parar: <b>oscila</b>.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Un pico sano: más usuarios, nada roto. El autoscaler mira una métrica (acá, el uso del pool de conexiones de cada réplica de Pagos, promedio de los últimos 5 s) y la compara con un umbral: si está por encima, suma réplicas; si sobra, saca. Siempre entre un mínimo y un máximo.
+    Subir el tráfico a 18: el pool se llena, 🤖 suma réplicas, pero cada una tarda 3 s en estar lista (aparece "calentando"). En el gráfico se ve la demora entre la carga y las réplicas. Bajar el tráfico: tarda en sacarlas, por el enfriamiento.
+    El enfriamiento es cuánto espera entre un cambio y el siguiente, y cuánto tiempo seguido tiene que sobrar capacidad antes de sacar una réplica. Ponerlo en 0 y el umbral en 30%: suma réplicas antes de que las anteriores estén listas, después le sobran, saca, le faltan... Oscila. Cada réplica que arranca y se va cuesta (conexiones nuevas, cachés frías).
+    Escalar ayuda cuando el cuello de botella es Pagos. Si el cuello de botella es algo compartido, como la base de datos, no ayuda: lo vemos en dos slides.
+    Pregunta para la clase: ¿qué métrica usarían para escalar un servicio que procesa una cola de mensajes?
+  </aside>
+</section>
+
+<!-- ============ 16. CIRCUIT BREAKER ============ -->
+<section data-scene="breaker">
+  <div class="kicker blue">Reaccionar solo</div>
+  <h2>Cortar a tiempo</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#4ade80"></i>cerrado</span><span><i style="background:#f87171"></i>abierto</span><span><i style="background:#facc15"></i>medio abierto</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">Pagos se cuelga. ¿Cuánto espera <b>Órdenes</b> antes de rendirse?</p>
+      <div class="seg" data-group="guard"><button type="button" data-v="none" class="active">sin límite</button><button type="button" data-v="timeout">timeout</button><button type="button" data-v="breaker">breaker</button></div>
+      <p class="mode-text" data-mode="none">Órdenes espera hasta 10 s por cada pedido. El usuario, también.</p>
+      <p class="mode-text" data-mode="timeout" hidden>A los <b>2 s</b> deja de esperar y falla. Pero cada pedido nuevo vuelve a probar.</p>
+      <p class="mode-text" data-mode="breaker" hidden>Tras <b>5 fallas</b> seguidas se abre: ni llama a Pagos. A los 5 s deja pasar <b>una prueba</b>.</p>
+      <div class="actions">
+        <button class="btn danger" data-act="break" data-fault="hang">⏸ Colgar Pagos</button>
+        <button class="btn" data-act="heal">🔧 Arreglar</button>
+        <button class="btn ghost icon" data-act="reset" title="Reiniciar la demo" aria-label="Reiniciar la demo">↺</button>
+      </div>
+      <div class="sstats three" data-service="ordenes" data-fields="p95,errPct,n" data-window="10" data-labels="p95 Órdenes,Errores,Checkouts"></div>
+      <div class="chart-box" style="height:130px"><canvas class="svc-chart" data-service="ordenes" data-fields="p95,errPct"></canvas></div>
+      <ul class="points">
+        <li class="fragment">Fallar rápido es mejor que colgarse: los recursos de Órdenes quedan libres.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Órdenes llama a Pagos. Si Pagos se cuelga (acepta el pedido y no contesta), ¿qué hace Órdenes? Sin límite, espera: acá hasta 10 s. Cada pedido colgado ocupa un hilo, una conexión y la paciencia del usuario. En un sistema real, Órdenes se queda sin recursos y se cae también: la falla se contagia.
+    Con timeout: a los 2 s deja de esperar y contesta error. Mucho mejor, pero cada pedido nuevo vuelve a probar y pierde sus 2 s.
+    Con circuit breaker (como la llave térmica de una casa): después de 5 fallas seguidas se abre y Órdenes ni siquiera llama a Pagos, falla en el acto. A los 5 s pasa a medio abierto y deja pasar un pedido de prueba: si sale bien se cierra, si falla se abre de nuevo. Mirar la píldora sobre el enlace Órdenes → Pagos y el p95 de Órdenes en cada modo.
+    Apretar "Arreglar" con el breaker abierto: la próxima prueba sale bien y se cierra solo.
+    El breaker no arregla Pagos: protege a Órdenes y le da aire a Pagos para recuperarse.
+    Pregunta para la clase: con el circuito abierto, ¿qué le mostrarían al usuario en vez de un error? ¿Hay algo que la tienda pueda hacer sin cobrar en el momento?
+  </aside>
+</section>
+
+<!-- ============ 17. LÍMITES ============ -->
+<section data-scene="limites">
+  <div class="kicker red">Reaccionar solo</div>
+  <h2>Cuando lo automático empeora las cosas</h2>
+  <div class="demo">
+    <div class="stage">
+      <svg class="sim"></svg>
+      <div class="legend"><span><i style="background:#2dd4bf"></i>conexión en uso</span><span><i style="background:#fb923c"></i>esperando</span><span><i style="background:#60a5fa"></i>🤖 reacción</span></div>
+    </div>
+    <div class="panel">
+      <p class="lead">El incidente de siempre: a los 3 s <b>la DB se pone lenta</b>. ¿Qué hace cada reacción automática?</p>
+      <div class="seg" data-group="react"><button type="button" data-v="restart" class="active">reiniciar</button><button type="button" data-v="scale">escalar</button><button type="button" data-v="retry">reintentos</button></div>
+      <p class="mode-text" data-mode="restart">🤖 Si Pagos falla más del 30%, lo reinicia. <b>Alivia unos segundos y vuelve a fallar</b>: el problema no está en Pagos.</p>
+      <p class="mode-text" data-mode="scale" hidden>🤖 El pool está lleno: suma réplicas. <b>Más consultas a la misma DB</b>: cada una tarda más.</p>
+      <p class="mode-text" data-mode="retry" hidden>🤖 Órdenes reintenta 2 veces cada cobro que falla. <b>Pagos recibe hasta el triple</b> de lo que piden los usuarios.</p>
+      <div class="hstats"></div>
+      <p class="lim-out"></p>
+      <div class="actions">
+        <button class="btn" data-act="heal">🔧 Arreglar la DB</button>
+        <button class="btn ghost" data-act="reset">↺ Otra vez</button>
+      </div>
+      <ul class="points">
+        <li class="fragment">Una reacción automática necesita saber <b>dónde</b> está el problema.</li>
+        <li class="fragment">Por eso se alerta igual: el 🤖 compra tiempo, una persona encuentra la causa.</li>
+      </ul>
+    </div>
+  </div>
+  <aside class="notes">
+    Las tres reacciones de esta parte, contra el incidente que venimos siguiendo desde el principio: la DB de Pagos se pone lenta, el pool de conexiones se llena y aparecen los timeouts.
+    Reiniciar: una regla automática reinicia Pagos cuando falla mucho. Se ve que alivia: el pool se vacía, la cola se borra y durante unos segundos todo anda. Pero la DB sigue lenta y el pool se vuelve a llenar. El contador de reinicios sube y nada cambia. Peor: cada reinicio corta los pedidos que estaban en curso.
+    Escalar: el autoscaler ve el pool lleno y hace lo que sabe hacer: sumar réplicas. Pero cada réplica trae 3 conexiones más contra la misma base. La DB atiende más consultas a la vez y cada una tarda más (mirar el p95 de la DB en rojo). Escalar empeoró el incidente: el cuello de botella era compartido.
+    Reintentos: Órdenes reintenta cada cobro que falla. Parece prudente, pero cada reintento es un pedido más contra un Pagos que ya no da abasto: la carga sobre Pagos se duplica o triplica. Por eso los reintentos van con espera creciente, con un tope, y junto a un circuit breaker.
+    "Arreglar la DB" es lo único que lo resuelve. La automatización compra tiempo; encontrar la causa sigue siendo trabajo de alguien mirando métricas, logs y trazas.
+    Pregunta para la clase: ¿qué reacción automática tienen hoy en su sistema que podría empeorar un incidente como éste?
   </aside>
 </section>
 

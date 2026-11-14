@@ -917,5 +917,240 @@
     };
   };
 
+  /* ---------- helpers de reaccionar solo (13–17) ---------- */
+
+  // Grupo propio de la escena dentro del svg de la ShopSim: _build vacía el svg al redibujar (reset, escalar),
+  // así que se vuelve a colgar si quedó afuera.
+  const overlay = (sim, cls) => {
+    const g = svgEl('g', { class: cls });
+    return () => { if (!g.isConnected) sim.svg.appendChild(g); return g; };
+  };
+  // Cada tanto en tiempo de simulación (para lo que se dibuja o se calcula sobre ventanas)
+  const throttleTick = (sim, sec, fn) => {
+    let last = -Infinity;
+    sim.on('tick', now => { if (now - last >= sec) { last = now; fn(); } });
+    sim.on('reset', () => { last = -Infinity; fn(); });
+  };
+
+  /* ---------- 13. health checks: ¿vivo? ¿listo? ---------- */
+
+  // Dos réplicas; colgar = sólo Pagos 1 (así se ve que con readiness la otra atiende todo); deploy lento = Pagos 2
+  // se reinicia y tarda HEALTH_WARM s en estar lista. El supervisor siempre levanta lo que liveness mata.
+  const HEALTH_WARM = 5;
+  const HEALTH_OPTS = { rate: 6, replicas: 2, warmup: HEALTH_WARM, restartPolicy: 'always', hcInterval: 1, hcFall: 2 };
+  const PROBES = { live: { liveness: true, readiness: false }, ready: { liveness: false, readiness: true }, both: { liveness: true, readiness: true } };
+
+  S.health = slide => {
+    let mode = 'live';
+    const opts = () => Object.assign({}, HEALTH_OPTS, PROBES[mode]);
+    const sim = setupShop(slide, opts());
+    const layer = overlay(sim, 'probe-badges');
+    // Debajo de cada réplica, lo que contestaría a cada pregunta (vivo: el proceso contesta; listo: puede atender)
+    const draw = () => {
+      const g = layer();
+      g.innerHTML = '';
+      sim.reps.forEach((r, i) => {
+        const n = r.node, st = sim.replicaState(i);
+        if (!n) return;
+        const live = st.up && !st.hang, ready = st.ready;
+        const t = svgEl('text', { class: 'probe-badge', 'data-rep': i, x: n.x, y: n.y + n.hh + (sim.v ? 15 : 19), 'text-anchor': 'middle' }, g);
+        const span = (cls, s) => { const x = svgEl('tspan', { class: cls }, t); x.textContent = s; return x; };
+        span(`p-live ${live ? 'ok' : 'no'}`, `vivo ${live ? '✓' : '✗'}`);
+        span('p-sep', ' · ');
+        span(`p-ready ${ready ? 'ok' : 'no'}`, `listo ${ready ? '✓' : '✗'}`);
+      });
+    };
+    throttleTick(sim, 0.1, draw);
+    seg(slide, 'probe', v => { mode = v; showModeIn(slide, v); sim.reset(opts()); });
+    on(slide, '[data-act=hang]', () => sim.hangReplica(0));
+    on(slide, '[data-act=deploy]', () => sim.restartReplica(1));
+    on(slide, '[data-act=heal]', () => sim.heal());
+    on(slide, '[data-act=reset]', () => sim.reset(opts()));
+    draw();
+    return Object.assign(life(sim), { state: () => ({ mode }) });
+  };
+
+  /* ---------- 14. supervisor: si se cae, levantalo ---------- */
+
+  // Una réplica. «Una caída» la tira (arranca bien); «bug al arrancar» es un crash loop hasta 🔧.
+  // La línea de tiempo sale de los eventos 'react' restart (detail.delay = la espera antes de ese reinicio).
+  const SUP_OPTS = { rate: 6 };
+  const SUP_ROWS = 5, SUP_CAP = 16;
+
+  S.supervisor = slide => {
+    let policy = 'on-failure';
+    const opts = () => Object.assign({}, SUP_OPTS, { restartPolicy: policy });
+    const sim = setupShop(slide, opts());
+    const tl = slide.querySelector('.tl');
+    let rows = [], downAt = null;
+    const bar = (sec, cls = '') => `<span class="tl-bar"><i class="${cls}" style="width:${Math.max(4, Math.min(1, sec / SUP_CAP) * 100).toFixed(1)}%"></i></span>`;
+    sim.on('react', e => { if (e.kind === 'restart') rows.push({ n: e.detail.restarts, delay: e.detail.delay }); });
+    const draw = () => {
+      const st = sim.replicaState(0), now = sim.now;
+      const down = !st.up && !st.booting;
+      if (down && downAt === null) downAt = now;
+      if (!down) downAt = null;
+      let html = rows.slice(-SUP_ROWS).map(r =>
+        `<div class="tl-row" data-delay="${r.delay}"><span class="tl-n">🤖 ↻${r.n}</span>${bar(r.delay)}<span class="tl-d">${r.delay} s</span></div>`).join('');
+      if (down && st.backoffUntil > now) {
+        const left = Math.ceil(st.backoffUntil - now - 1e-9), total = Math.round(st.backoffUntil - downAt);
+        html += `<div class="tl-row wait"><span class="tl-n">💥 caído</span>${bar(total, 'wait')}<span class="tl-d">faltan ${left} s</span></div>`;
+      } else if (down) {
+        html += `<div class="tl-row dead"><span class="tl-n">💥 caído</span><span class="tl-msg">nadie lo levanta</span></div>`;
+      } else if (st.booting && rows.length) {
+        html += `<div class="tl-row boot"><span class="tl-n">⏳</span><span class="tl-msg">arrancando…</span></div>`;
+      }
+      tl.innerHTML = html || '<div class="tl-empty">Todavía no se cayó.</div>';
+    };
+    throttleTick(sim, 0.1, draw);
+    sim.on('reset', () => { rows = []; downAt = null; draw(); });
+    seg(slide, 'policy', v => { policy = v; showModeIn(slide, v); sim.reset(opts()); });
+    on(slide, '[data-act=crash]', () => sim.crashReplica(0));
+    on(slide, '[data-act=loop]', () => sim.breakPagos('crash'));
+    on(slide, '[data-act=heal]', () => sim.heal());
+    on(slide, '[data-act=reset]', () => sim.reset(opts()));
+    draw();
+    return Object.assign(life(sim), { state: () => ({ policy, delays: rows.map(r => r.delay) }) });
+  };
+
+  /* ---------- 15. autoscaling: sumar réplicas con la carga ---------- */
+
+  // Con readiness: las réplicas nuevas no reciben pedidos mientras calientan (sin readiness devolverían 503).
+  // «Enfriamiento» es a la vez el tiempo mínimo entre dos cambios y la ventana para bajar (cuánto tiempo seguido
+  // tiene que sobrar capacidad antes de sacar una réplica): con 0 suma antes de que las nuevas estén listas y oscila.
+  const AS_OPTS = { readiness: true, showPool: true };
+  const AS_START = 3, AS_POINTS = 60, AS_EVERY_CHART = 0.5, AS_DEMAND = 5;
+
+  S.autoscaling = slide => {
+    const q = c => slide.querySelector(c);
+    const target = q('input.target'), cool = q('input.cooldown'), rate = q('input.rate');
+    const cfg = () => ({ target: +target.value / 100, min: 1, max: 6, cooldown: +cool.value, startup: AS_START, downWindow: +cool.value });
+    const opts = () => Object.assign({}, AS_OPTS, { rate: +rate.value, autoscale: cfg() });
+    const sim = setupShop(slide, opts());
+    rateSlider(slide, sim);
+    const syncAS = () => {
+      q('.target-out').textContent = `${target.value}%`;
+      q('.cooldown-out').textContent = `${cool.value} s`;
+      sim.set('autoscale', cfg());
+    };
+    target.addEventListener('input', syncAS);
+    cool.addEventListener('input', syncAS);
+    syncAS();
+
+    let arrivals = [], dirs = [];
+    sim.on('request', () => arrivals.push(sim.now));
+    sim.on('react', e => { if (e.kind === 'scale') dirs.push(Math.sign(e.detail.to - e.detail.from)); });
+    const changes = () => dirs.reduce((c, d, i) => c + (i && d !== dirs[i - 1] ? 1 : 0), 0);
+
+    const blank = () => Array(AS_POINTS).fill(null);
+    const ch = new Chart(q('canvas.as-chart'), {
+      type: 'line',
+      data: { labels: Array(AS_POINTS).fill(''), datasets: [
+        { label: 'réplicas', data: blank(), yAxisID: 'y0', borderColor: '#60a5fa', backgroundColor: '#60a5fa22', stepped: true, fill: true, pointRadius: 0, borderWidth: 2.5 },
+        { label: 'pedidos/s', data: blank(), yAxisID: 'y1', borderColor: '#a78bfa', backgroundColor: '#a78bfa00', tension: 0.35, pointRadius: 0, borderWidth: 2 }
+      ] },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 10, boxHeight: 10, font: { size: 12 } } } },
+        scales: {
+          x: { display: false },
+          y0: { position: 'left', min: 0, max: 6, ticks: { color: '#60a5fa', stepSize: 2, font: { size: 11 } }, grid: { color: 'rgba(148,163,184,.12)' } },
+          y1: { position: 'right', min: 0, suggestedMax: 24, ticks: { color: '#a78bfa', font: { size: 11 } }, grid: { display: false } }
+        }
+      }
+    });
+    const out = q('.as-out');
+    const sample = () => {
+      const from = sim.now - AS_DEMAND;
+      while (arrivals.length && arrivals[0] <= from) arrivals.shift();
+      const [rep, dem] = ch.data.datasets;
+      rep.data.push(sim.replicaCount); rep.data.shift();
+      dem.data.push(+(arrivals.length / Math.min(AS_DEMAND, Math.max(sim.now, 1))).toFixed(1)); dem.data.shift();
+      ch.update('none');
+      const c = changes();
+      out.innerHTML = `🤖 <b>${sim.replicaCount}</b> ${sim.replicaCount === 1 ? 'réplica' : 'réplicas'}` +
+        (c ? ` · <b class="${c >= 3 ? 'bad' : ''}">${c} ${c === 1 ? 'cambio' : 'cambios'} de dirección</b>` : '');
+    };
+    let last = -Infinity;
+    sim.on('tick', now => { if (now - last >= AS_EVERY_CHART) { last = now; sample(); } });
+    sim.on('reset', () => { arrivals = []; dirs = []; last = -Infinity; ch.data.datasets.forEach(d => { d.data = blank(); }); sample(); });
+    on(slide, '[data-act=reset]', () => { resetSliders(slide); sim.reset(opts()); });
+    sample();
+    return Object.assign(life(sim), { state: () => ({ replicas: sim.replicaCount, changes: changes() }) });
+  };
+
+  /* ---------- 16. circuit breaker: cortar a tiempo ---------- */
+
+  const BRK_OPTS = { rate: 6 };
+  const GUARDS = { none: {}, timeout: { timeout: 2 }, breaker: { timeout: 2, breaker: { failures: 5, openFor: 5 } } };
+
+  S.breaker = slide => {
+    let mode = 'none';
+    const opts = () => Object.assign({}, BRK_OPTS, GUARDS[mode]);
+    const sim = setupShop(slide, opts());
+    breakButtons(slide, sim);
+    seg(slide, 'guard', v => { mode = v; showModeIn(slide, v); sim.reset(opts()); });
+    on(slide, '[data-act=reset]', () => sim.reset(opts()));
+    return Object.assign(life(sim), { state: () => ({ mode, breaker: sim.brState }) });
+  };
+
+  /* ---------- 17. límites: cuando lo automático empeora las cosas ---------- */
+
+  // El mismo incidente (slowdb a los LIM_BREAK_AT s) con una reacción automática distinta en cada modo:
+  // reiniciar = regla de la escena (Pagos con más de LIM_RULE % de errores en LIM_RULE_WIN s → 🤖 reinicio, como
+  // mucho cada LIM_RULE_GAP s); escalar = autoscaler sobre el pool lleno; reintentos = Órdenes reintenta 2 veces.
+  const LIM_BREAK_AT = 3, LIM_RULE = 30, LIM_RULE_WIN = 5, LIM_RULE_GAP = 15, LIM_WIN = 10;
+  const LIM_OPTS = { rate: 6, showPool: true };
+  const LIM_MODES = {
+    restart: {},
+    scale: { readiness: true, autoscale: { target: 0.7, min: 1, max: 6, cooldown: 5, startup: 3 } },
+    retry: { retries: 2 }
+  };
+
+  S.limites = slide => {
+    let mode = 'restart', restarts = [], arrivals = [];
+    const opts = () => Object.assign({}, LIM_OPTS, LIM_MODES[mode]);
+    const sim = setupShop(slide, opts());
+    const upd = hstats(slide, [['err', 'Errores'], ['db', 'DB p95'], ['load', 'A Pagos'], ['reps', 'Réplicas']]);
+    const out = slide.querySelector('.lim-out');
+    const arm = () => {
+      sim.after(LIM_BREAK_AT, () => sim.breakPagos('slowdb'));
+      if (mode !== 'restart') return;
+      let lastAt = -Infinity;
+      sim.every(1, () => {
+        if (sim.now - lastAt < LIM_RULE_GAP || !sim.replicaState(0).up) return;
+        if (sim.window(LIM_RULE_WIN, 'pagos').errPct <= LIM_RULE) return;
+        lastAt = sim.now;
+        restarts.push(sim.now);
+        sim.restartReplica(0, { auto: true, why: `más de ${LIM_RULE}% de errores` });
+      });
+    };
+    sim.on('request', () => arrivals.push(sim.now));
+    const draw = () => {
+      const from = sim.now - LIM_WIN;
+      while (arrivals.length && arrivals[0] <= from) arrivals.shift();
+      const span = Math.min(LIM_WIN, Math.max(sim.now, 1));
+      const demand = arrivals.length / span, toPagos = sim.window(LIM_WIN, 'pagos').n / span;
+      const ratio = demand > 0 ? toPagos / demand : 0;
+      const err = sim.window(5).errPct, db = sim.window(LIM_WIN, 'db').p95, n = sim.replicaCount;
+      upd({ err: `${Math.round(err)}%`, db: `${comma(db)} s`, load: `×${comma(ratio)}`, reps: n });
+      const bad = { err: err > 10, db: db > 1.5, load: ratio >= 1.5, reps: n > 1 && mode === 'scale' && sim.fault };
+      for (const k in bad) slide.querySelector(`.hstats .s-${k}`).classList.toggle('bad', !!bad[k]);
+      out.innerHTML = !sim.fault && sim.now < LIM_BREAK_AT ? `Todo sano. La DB se pone lenta a los ${LIM_BREAK_AT} s…`
+        : !sim.fault ? '🔧 DB arreglada: ahora sí se recupera.'
+        : mode === 'restart' ? (restarts.length ? `🤖 reinició Pagos <b>${restarts.length} ${restarts.length === 1 ? 'vez' : 'veces'}</b> · la DB sigue lenta` : '💥 DB lenta: Pagos empieza a fallar…')
+        : mode === 'scale' ? `🤖 ${n} ${n === 1 ? 'réplica' : 'réplicas'} = <b>${n * sim.o.pool} conexiones</b> contra la misma DB`
+        : `Pagos recibe <b>${comma(toPagos)}/s</b> para ${comma(demand)} checkouts/s`;
+    };
+    throttleTick(sim, 0.5, draw);
+    sim.on('reset', () => { restarts = []; arrivals = []; arm(); draw(); });
+    seg(slide, 'react', v => { mode = v; showModeIn(slide, v); sim.reset(opts()); });
+    on(slide, '[data-act=heal]', () => { sim.heal(); draw(); });
+    on(slide, '[data-act=reset]', () => sim.reset(opts()));
+    arm();
+    draw();
+    return Object.assign(life(sim), { state: () => ({ mode, restarts: restarts.slice() }) });
+  };
+
   window.Scenes = S;
 })();

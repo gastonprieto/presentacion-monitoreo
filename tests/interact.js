@@ -649,6 +649,96 @@ test('react: dibuja réplicas, estados y el robot', async page => {
   }
 });
 
+test('react: el rótulo del escalado va en plural', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { rate: 20, autoscale: { target: 0.3, min: 1, max: 6, cooldown: 0, startup: 1 } });
+    const mo = new MutationObserver(() => {});
+    mo.observe(svg, { childList: true, subtree: true });
+    let t = 0; while (t < 8) { s.clock._tick(0, 50); t += 0.05 * NetKit.Speed.value; }
+    const pops = mo.takeRecords().flatMap(x => [...x.addedNodes]).filter(n => n.classList && n.classList.contains('pop')).map(n => n.textContent);
+    mo.disconnect();
+    return { pops: pops.filter(p => p.includes('🤖')), jumps: s.ev.filter(e => e.kind === 'scale').map(e => e.detail.to - e.detail.from) };
+  }`);
+  check(r.jumps.some(j => j > 1), `sin saltos de más de una réplica: ${r.jumps}`);
+  check(r.pops.some(p => /\+[2-9] réplicas/.test(p)), `rótulos: ${r.pops}`);
+  check(!r.pops.some(p => /\+[2-9] réplica$/.test(p)), `singular con varias: ${r.pops}`);
+});
+
+test('react: el autoscaler no decide sin réplicas listas', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { restartPolicy: 'on-failure', autoscale: { target: 0.7, min: 1, max: 6, cooldown: 2, startup: 1 } });
+    s.fastForward(5);
+    s.breakPagos('crash');
+    s.fastForward(30);
+    return { n: s.replicaCount, scales: s.ev.filter(e => e.kind === 'scale').map(e => e.detail.to) };
+  }`);
+  check(r.n === 1 && r.scales.length === 0, `crash loop escaló: ${r.n} réplicas · ${r.scales}`);
+});
+
+test('react: al achicar saca primero las que no están listas', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const s = (${SHOPR})(svg, { replicas: 3, restartTime: 3 });
+    s.fastForward(3);
+    s.restartReplica(0); // la 1 queda arrancando
+    s.set('replicas', 2);
+    return [s.replicaState(0).id, s.replicaState(1).id];
+  }`);
+  check(r.join() === '2,3', `quedaron ${r}`);
+});
+
+test('react: colgar y tirar una sola réplica', async page => {
+  await open(page, 0);
+  const r = await engine(page, `(svg) => {
+    const a = (${SHOPR})(svg, { replicas: 2, readiness: true });
+    a.fastForward(5);
+    a.hangReplica(0);
+    a.fastForward(20);
+    const hung = { s0: a.replicaState(0), s1: a.replicaState(1), err: a.window(3).errPct, fault: a.fault };
+    a.heal();
+    a.fastForward(3);
+    const healed = a.replicaState(0);
+    const b = (${SHOPR})(svg, { restartPolicy: 'on-failure' });
+    b.fastForward(5);
+    b.crashReplica(0);
+    b.fastForward(20);
+    const once = { st: b.replicaState(0), restarts: b.ev.filter(e => e.kind === 'restart').length, err: b.window(5).errPct };
+    const c = (${SHOPR})(svg, {});
+    c.fastForward(5);
+    c.crashReplica(0);
+    c.fastForward(5);
+    const down = c.replicaState(0).up;
+    c.heal();
+    c.fastForward(5);
+    c.restartReplica(0, { auto: true });
+    return { hung, healed, once, down, upAgain: c.replicaState(0).up || c.replicaState(0).booting, auto: c.ev.map(e => e.kind) };
+  }`);
+  check(r.hung.s0.hang && !r.hung.s0.inRotation && r.hung.s1.ready && !r.hung.s1.hang && r.hung.fault === null, JSON.stringify(r.hung));
+  check(r.hung.err === 0, `con una colgada y readiness: errPct ${r.hung.err}`);
+  check(!r.healed.hang && r.healed.inRotation, `arreglar no la descolgó: ${JSON.stringify(r.healed)}`);
+  check(r.once.st.up && r.once.st.restarts === 1 && r.once.restarts === 1 && r.once.err === 0, JSON.stringify(r.once));
+  check(!r.down && r.upAgain, `heal no levanta la caída: ${r.down} → ${r.upAgain}`);
+  check(r.auto.includes('restart'), `reinicio automático sin 🤖: ${r.auto}`);
+});
+
+test('react: el breaker es una píldora sobre el enlace a Pagos', async page => {
+  for (const mobile of [false, true]) {
+    await open(page, 0, mobile);
+    const r = await engine(page, `(svg) => {
+      const s = new ShopSimKit.ShopSim(svg, { timeout: 2, breaker: { failures: 3, openFor: 5 } });
+      const g = svg.querySelector('.breaker'), rect = g && g.querySelector('rect');
+      const m = g && /translate\\(([-\\d.]+)/.exec(g.getAttribute('transform'));
+      const x = rect && m ? +m[1] + +rect.getAttribute('x') + rect.getAttribute('width') / 2 : null;
+      return { rect: !!rect, text: g && g.textContent, x, ox: s.ordenes.x, px: s.reps[0].node.x, oy: s.ordenes.y, py: s.reps[0].node.y };
+    }`);
+    check(r.rect && r.text.includes('cerrado'), `píldora: ${JSON.stringify(r)}`);
+    const lo = Math.min(r.ox, r.px), hi = Math.max(r.ox, r.px);
+    check(r.x > lo && r.x < hi, `no está entre Órdenes y Pagos (${mobile ? 'celular' : 'escritorio'}): ${JSON.stringify(r)}`);
+  }
+});
+
 /* ---------- widgets del dashboard ---------- */
 
 // Arma en la página una "slide de prueba" con los cuatro widgets sobre una ShopSim y la deja correr `ff` s.
@@ -840,7 +930,8 @@ test('widget: cascada resalta el más largo sin contar Órdenes aunque no sea el
 
 // Índices de slide (0-based)
 const SL = { sinsenales: 1, preguntas: 2, metricas: 3, percentiles: 4, doradas: 5, logs: 6, centralizar: 7, trazas: 8, tresjuntas: 9,
-  umbral: 10, sintoma: 11, slo: 12 };
+  umbral: 10, sintoma: 11, slo: 12,
+  health: 13, supervisor: 14, autoscaling: 15, breaker: 16, limites: 17 };
 
 // Mueve un slider de la slide y dispara 'input'
 const SLIDE_INPUT = `(sec, sel, v) => { const r = sec.querySelector(sel); r.value = v; r.dispatchEvent(new Event('input')); }`;
@@ -1179,6 +1270,176 @@ test('escena slo: romper acelera el consumo', async page => {
   check(r.s99.end.exhaustedAfter === null || r.s999.end.exhaustedAfter < r.s99.end.exhaustedAfter,
     `se agota: 99,9 a los ${r.s999.end.exhaustedAfter} d, 99 a los ${r.s99.end.exhaustedAfter} d`);
   check(r.s999.sano.remainingPct < r.s99.sano.remainingPct, `restante sano: 99,9 ${r.s999.sano.remainingPct}, 99 ${r.s99.sano.remainingPct}`);
+});
+
+/* ---------- escenas: reaccionar solo ---------- */
+
+test('escena health: con ¿vivo? colgar reinicia y se recupera', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.health, sec => {
+    const sim = sec._scene.sim;
+    const run = mode => {
+      sec.querySelector(`.seg[data-group=probe] [data-v=${mode}]`).click();
+      const ev = [];
+      let fails = 0;
+      const onR = e => ev.push(e.kind), onT = tr => { if (!tr.ok) fails++; };
+      sim.on('react', onR); sim.on('trace', onT);
+      sim.fastForward(5);
+      sec.querySelector('[data-act=hang]').click();
+      sim.fastForward(1);
+      const badge = sec.querySelector('svg.sim .probe-badge[data-rep="0"]');
+      const mid = { live: badge && badge.querySelector('.p-live').classList.contains('no'), text: badge && badge.textContent };
+      sim.fastForward(24);
+      sim.listeners.react.splice(sim.listeners.react.indexOf(onR), 1);
+      sim.listeners.trace.splice(sim.listeners.trace.indexOf(onT), 1);
+      return { ev, mid, st: sim.replicaState(0), err: sim.window(5).errPct, fails };
+    };
+    return { live: run('live'), ready: run('ready'), both: run('both') };
+  });
+  check(r.live.ev.includes('restart') && r.live.st.up && r.live.st.restarts === 1, `¿vivo?: ${JSON.stringify(r.live)}`);
+  check(r.live.err < 5, `¿vivo? no se recuperó: ${r.live.err}`);
+  check(r.live.mid.live && /vivo/.test(r.live.mid.text) && /listo/.test(r.live.mid.text), `estado en el dibujo: ${JSON.stringify(r.live.mid)}`);
+  check(!r.ready.ev.includes('restart') && r.ready.st.hang && !r.ready.st.inRotation && r.ready.err === 0, `¿listo?: ${JSON.stringify(r.ready)}`);
+  check(r.both.ev.includes('restart') && r.both.fails < r.live.fails, `las dos: ${r.both.fails} fallas vs ${r.live.fails}`);
+});
+
+test('escena health: deploy lento con ¿listo? no da errores', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.health, sec => {
+    const sim = sec._scene.sim;
+    const run = mode => {
+      sec.querySelector(`.seg[data-group=probe] [data-v=${mode}]`).click();
+      let fails = 0;
+      const onT = tr => { if (!tr.ok) fails++; };
+      sim.on('trace', onT);
+      sim.fastForward(5);
+      sec.querySelector('[data-act=deploy]').click();
+      sim.fastForward(15);
+      sim.listeners.trace.splice(sim.listeners.trace.indexOf(onT), 1);
+      return { fails, st: sim.replicaState(1) };
+    };
+    return { live: run('live'), ready: run('ready') };
+  });
+  check(r.live.fails > 0, `con sólo ¿vivo? el deploy no falla: ${JSON.stringify(r.live)}`);
+  check(r.ready.fails === 0 && r.ready.st.restarts === 1 && r.ready.st.ready, `¿listo?: ${JSON.stringify(r.ready)}`);
+});
+
+test('escena supervisor: crash loop con esperas crecientes', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.supervisor, sec => {
+    const sim = sec._scene.sim;
+    const rows = () => [...sec.querySelectorAll('.tl .tl-row[data-delay]')].map(x => +x.dataset.delay);
+    sec.querySelector('.seg[data-group=policy] [data-v=on-failure]').click();
+    sim.fastForward(3);
+    sec.querySelector('[data-act=loop]').click();
+    sim.fastForward(40);
+    const loop = { rows: rows(), up: sim.replicaState(0).up, wait: !!sec.querySelector('.tl .tl-row.wait') };
+    sec.querySelector('[data-act=heal]').click();
+    sim.fastForward(5);
+    const healed = sim.replicaState(0).up;
+    sec.querySelector('[data-act=reset]').click();
+    sim.fastForward(3);
+    sec.querySelector('[data-act=crash]').click();
+    sim.fastForward(10);
+    const once = { rows: rows(), up: sim.replicaState(0).up };
+    sec.querySelector('.seg[data-group=policy] [data-v=no]').click();
+    sim.fastForward(3);
+    sec.querySelector('[data-act=crash]').click();
+    sim.fastForward(10);
+    const no = { rows: rows(), up: sim.replicaState(0).up, dead: !!sec.querySelector('.tl .tl-row.dead') };
+    return { loop, healed, once, no };
+  });
+  check(r.loop.rows.length >= 4, `reinicios en la línea de tiempo: ${r.loop.rows}`);
+  check(r.loop.rows.slice(0, 4).join() === '1,2,4,8', `esperas: ${r.loop.rows}`);
+  check(!r.loop.up && r.healed, `crash loop: ${JSON.stringify(r.loop)} · arreglado ${r.healed}`);
+  check(r.once.rows.join() === '1' && r.once.up, `una vez: ${JSON.stringify(r.once)}`);
+  check(r.no.rows.length === 0 && !r.no.up && r.no.dead, `sin reiniciar: ${JSON.stringify(r.no)}`);
+});
+
+test('escena autoscaling: sube con la carga y oscila sin enfriamiento', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.autoscaling, (sec, input) => {
+    const sim = sec._scene.sim, slide = eval(input);
+    sim.fastForward(10);
+    const before = sim.replicaCount;
+    slide(sec, 'input.rate', 18);
+    sim.fastForward(30);
+    const after = sim.replicaCount, err = sim.window(10).errPct;
+    sec.querySelector('[data-act=reset]').click();
+    slide(sec, 'input.target', 30);
+    slide(sec, 'input.cooldown', 0);
+    const ev = [];
+    sim.on('react', e => e.kind === 'scale' && ev.push(e.detail.to - e.detail.from));
+    sim.fastForward(60);
+    let changes = 0;
+    for (let i = 1; i < ev.length; i++) if (Math.sign(ev[i]) !== Math.sign(ev[i - 1])) changes++;
+    const chart = Chart.getChart(sec.querySelector('canvas.as-chart'));
+    return { before, after, err, changes, state: sec._scene.state(), points: chart.data.datasets[0].data.filter(x => x !== null).length };
+  }, SLIDE_INPUT);
+  check(r.before === 1 && r.after >= 3, `réplicas ${r.before} → ${r.after}`);
+  check(r.err < 2, `errPct con el pico ${r.err}`);
+  check(r.changes >= 3, `cambios de dirección en 60 s: ${r.changes}`);
+  check(r.state.changes >= 3, `state: ${JSON.stringify(r.state)}`);
+  check(r.points > 10, `el gráfico no tiene puntos: ${r.points}`);
+});
+
+test('escena breaker: breaker < timeout < sin límite', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.breaker, sec => {
+    const sim = sec._scene.sim, out = {};
+    for (const m of ['none', 'timeout', 'breaker']) {
+      sec.querySelector(`.seg[data-group=guard] [data-v=${m}]`).click();
+      const seen = new Set();
+      const onTick = () => { const g = sec.querySelector('svg.sim .breaker'); if (g) seen.add(g.textContent); };
+      sim.on('tick', onTick);
+      sim.fastForward(5);
+      sec.querySelector('[data-act=break]').click();
+      for (let i = 0; i < 40; i++) { sim.fastForward(1); onTick(); }
+      sim.listeners.tick.splice(sim.listeners.tick.indexOf(onTick), 1);
+      out[m] = { p95: sim.window(25, 'ordenes').p95, seen: [...seen] };
+    }
+    return out;
+  });
+  check(r.breaker.p95 < r.timeout.p95 && r.timeout.p95 < r.none.p95, `p95 ${r.breaker.p95} < ${r.timeout.p95} < ${r.none.p95}`);
+  check(['cerrado', 'abierto', 'medio abierto'].every(s => r.breaker.seen.some(x => x.endsWith(s))), `píldora: ${r.breaker.seen}`);
+  check(r.none.seen.length === 0, `píldora sin breaker: ${r.none.seen}`);
+});
+
+test('escena limites: reiniciar alivia y vuelve a fallar', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.limites, sec => {
+    const sim = sec._scene.sim;
+    sec.querySelector('.seg[data-group=react] [data-v=restart]').click();
+    const series = [];
+    for (let i = 0; i < 60; i++) { sim.fastForward(1); series.push([sim.now, sim.window(3).errPct]); }
+    return { series, st: sec._scene.state(), out: sec.querySelector('.lim-out').textContent };
+  });
+  const rs = r.st.restarts;
+  check(rs.length >= 2, `reinicios: ${rs}`);
+  const at = (a, b) => r.series.filter(([t]) => t >= rs[0] + a && t <= rs[0] + b).map(x => x[1]);
+  const dip = Math.min(...at(4, 8)), back = Math.max(...at(8, 18)), before = Math.max(...at(-4, 0));
+  check(before > 30, `antes del reinicio: ${before}`);
+  check(dip < 10, `no alivia: mínimo ${dip} después del reinicio en ${rs[0]}`);
+  check(back > 30, `no vuelve a fallar: máximo ${back}`);
+  check(/reinici/.test(r.out), `texto: ${r.out}`);
+});
+
+test('escena limites: escalar satura la DB y los reintentos multiplican la carga', async page => {
+  await open(page);
+  const r = await evalScene(page, SL.limites, sec => {
+    const sim = sec._scene.sim, out = {};
+    for (const m of ['restart', 'scale', 'retry']) {
+      sec.querySelector(`.seg[data-group=react] [data-v=${m}]`).click();
+      sim.fastForward(60);
+      out[m] = { db: sim.window(40, 'db').p95, pagos: sim.window(30, 'pagos').rps, checkout: sim.window(30).rps, n: sim.replicaCount,
+        bad: [...sec.querySelectorAll('.hstats .stat.bad')].map(x => x.className) };
+    }
+    return out;
+  });
+  check(r.scale.n > 1 && r.scale.db > 2 * r.restart.db, `p95 DB: reiniciar ${r.restart.db} · escalar ${r.scale.db} (${r.scale.n} réplicas)`);
+  check(r.retry.pagos >= 2 * r.retry.checkout, `reintentos: pagos ${r.retry.pagos} rps vs checkout ${r.retry.checkout}`);
+  check(r.scale.bad.some(c => c.includes('s-db')), `DB no está en rojo: ${r.scale.bad}`);
+  check(r.retry.bad.some(c => c.includes('s-load')), `la carga no está en rojo: ${r.retry.bad}`);
 });
 
 /* ---------- runner ---------- */

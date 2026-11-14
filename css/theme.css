@@ -713,3 +713,59 @@ html.mobile .outro .cta .repo-link { margin: 24px 0 0; }
 .outro .cta p.lab { font-size: 17px; color: var(--muted); margin-top: 12px; }
 .outro .cta p.lab a { color: inherit; }
 html.mobile .outro .cta p.lab { font-size: 14px; }
+
+/* ---------- slides 13–17: reaccionar solo ---------- */
+
+:root { --react: #60a5fa; }
+.netsim .breaker rect { fill: #0a0f1f; stroke-width: 2; }
+.netsim .breaker.br-open rect { fill: #3a1018; }
+.netsim .breaker.br-half rect { fill: #33280a; }
+.kicker.blue { color: var(--react); }
+/* 13. lo que contestaría cada réplica */
+.netsim .probe-badge { font: 700 12.5px var(--mono); }
+.netsim .probe-badge .ok { fill: var(--green); }
+.netsim .probe-badge .no { fill: var(--red); }
+.netsim .probe-badge .p-sep { fill: var(--dim); }
+/* 14. línea de tiempo de reinicios */
+.tl-box { padding: 8px 12px; }
+.tl { display: flex; flex-direction: column; gap: 3px; min-height: 112px; }
+.tl-row { display: grid; grid-template-columns: 70px 1fr 84px; gap: 8px; align-items: center; font: 12.5px var(--mono); color: #cbd5e1; }
+.tl-n { color: var(--react); font-weight: 700; white-space: nowrap; }
+.tl-bar { height: 12px; background: rgba(148, 163, 184, .08); border-radius: 3px; overflow: hidden; }
+.tl-bar i { display: block; height: 100%; background: var(--react); border-radius: 3px; }
+.tl-bar i.wait { background: repeating-linear-gradient(45deg, rgba(248, 113, 113, .65) 0 5px, rgba(248, 113, 113, .3) 5px 10px); }
+.tl-d { text-align: right; white-space: nowrap; }
+.tl-row.wait .tl-n, .tl-row.dead .tl-n { color: var(--red); }
+.tl-row.wait .tl-d, .tl-row.dead .tl-msg { color: var(--red); font-weight: 700; }
+.tl-row.boot .tl-msg { color: var(--yellow); }
+.tl-msg { grid-column: 2 / -1; }
+.tl-empty { font-size: 13px; color: var(--dim); }
+/* 15. autoscaling */
+.box.three { padding: 8px 12px; }
+.box.three .slider-row + .slider-row { margin-top: 6px; }
+.box.three .rate-out { min-width: 122px; }
+.as-box { height: 150px; }
+.as-row { flex-wrap: nowrap; justify-content: space-between; }
+.panel .as-out { font: 14px var(--mono); color: #cbd5e1; }
+.as-out b { color: var(--react); }
+.as-out b.bad { color: var(--red); }
+/* 17. lo que empeora */
+.stat.bad { border-color: var(--red); background: rgba(248, 113, 113, .1); }
+.stat.bad b { color: var(--red) !important; }
+.panel .lim-out { font: 14px var(--mono); color: #cbd5e1; min-height: 20px; }
+.lim-out b { color: var(--red); }
+.panel .hstats .stat b { font-size: 17px; }
+.panel .hstats .stat span { font-size: 10px; letter-spacing: .03em; }
+
+html.mobile .netsim .probe-badge { font-size: 11px; }
+html.mobile .tl-row { grid-template-columns: 66px 1fr 84px; font-size: 12px; }
+html.mobile .box.three .rate-out { min-width: 104px; font-size: 14px; }
+html.mobile .panel .hstats { grid-template-columns: repeat(2, 1fr) !important; }
+.actions.tight { flex-wrap: nowrap; gap: 6px; }
+.actions.tight .btn { padding: 8px 11px; font-size: 14.5px; white-space: nowrap; }
+.actions.tight .btn.icon { width: 38px; padding: 8px 0; }
+.sstats.three { grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.sstats.three .sstat b { font-size: 17px; }
+.sstats.three .sstat span { font-size: 10px; letter-spacing: .03em; white-space: nowrap; }
+html.mobile .actions.tight { flex-wrap: wrap; }
+.actions.tight .btn.icon { flex: none; }
