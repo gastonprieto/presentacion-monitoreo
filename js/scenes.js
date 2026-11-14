@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const { Sim, Clock, svgEl, pop, C } = window.NetKit;
+  const { Clock, svgEl, pop, C } = window.NetKit;
   const S = {};
 
   /* ---------- helpers ---------- */
@@ -38,11 +38,78 @@
 
   /* ---------- 0. portada: simulación decorativa de fondo ---------- */
 
+  /* ---------- portada: un panel de monitoreo que cuenta el incidente en loop ---------- */
+
+  // Ciclo de TITLE_CYCLE s: sano → sube la latencia → aparecen errores → suena la alerta → 🤖 reinicio → vuelve.
+  // El tráfico (la demanda) no cambia: es la misma historia que el resto del deck.
+  const TITLE_CYCLE = 40, TITLE_STEP = 0.15, TITLE_POINTS = 120;
+  const TITLE_ALERT = [21, 31], TITLE_RESTART = 28;
+
+  function titleSignals(t, r) {
+    const c = t % TITLE_CYCLE, n = () => (r() - 0.5);
+    const ramp = (a, b) => Math.max(0, Math.min(1, (c - a) / (b - a)));
+    const bad = c < TITLE_RESTART ? ramp(13, 22) : 1 - ramp(TITLE_RESTART, 33);
+    const errs = c < TITLE_RESTART ? ramp(19, 25) : 1 - ramp(TITLE_RESTART, 31);
+    return {
+      lat: 0.18 + 0.05 * n() + 0.72 * bad + 0.06 * bad * n(),
+      err: 0.04 + 0.03 * Math.abs(n()) + 0.6 * errs,
+      rps: 0.5 + 0.08 * Math.sin(t / 3) + 0.07 * n(),
+      alert: c >= TITLE_ALERT[0] && c < TITLE_ALERT[1]
+    };
+  }
+
   S.title = slide => {
-    const sim = new Sim(slide.querySelector('svg.bg'), {
-      clients: 3, servers: 4, rate: 5, colorByClient: true, showHandled: false, serviceTime: 0.6
+    const svg = slide.querySelector('svg.bg');
+    svg.setAttribute('viewBox', '0 0 900 590');
+    svg.innerHTML = '';
+    const clock = new Clock(), r = window.ObsKit.rng(7);
+    const PANELS = [
+      { k: 'lat', label: 'Latencia p95', col: C.slow },
+      { k: 'err', label: 'Errores', col: '#f87171' },
+      { k: 'rps', label: 'Tráfico', col: '#38bdf8' }
+    ];
+    const X0 = 40, X1 = 790, PH = 150, GAP = 30, Y0 = 70;
+    PANELS.forEach((p, i) => {
+      const y = Y0 + i * (PH + GAP);
+      p.y = y;
+      svgEl('rect', { x: X0 - 16, y: y - 34, width: X1 - X0 + 32, height: PH + 46, rx: 12, fill: '#111a33', stroke: '#24304f' }, svg);
+      svgEl('text', { x: X0, y: y - 12, fill: '#a78bfa', 'font-size': 18, 'font-family': 'ui-monospace, monospace' }, svg).textContent = p.label;
+      for (let g = 1; g < 4; g++) svgEl('line', { x1: X0, x2: X1, y1: y + g * PH / 4, y2: y + g * PH / 4, stroke: '#24304f', 'stroke-dasharray': '4 6' }, svg);
+      p.line = svgEl('polyline', { fill: 'none', stroke: p.col, 'stroke-width': 3, 'stroke-linejoin': 'round' }, svg);
+      p.data = [];
     });
-    return life(sim);
+    const badge = svgEl('g', { opacity: 0 }, svg);
+    svgEl('rect', { x: 476, y: 14, width: 330, height: 40, rx: 20, fill: '#f87171' }, badge);
+    svgEl('text', { x: 641, y: 41, 'text-anchor': 'middle', fill: '#0a0f1f', 'font-size': 19, 'font-weight': 700 }, badge).textContent = '🔔 ALERTA · errores de checkout';
+    const bot = svgEl('text', { x: 500, y: Y0 + PH / 2, fill: '#60a5fa', 'font-size': 22, 'font-weight': 700, opacity: 0 }, svg);
+    bot.textContent = '🤖 reinicio automático';
+
+    let t = 0;
+    const st = { alert: false, restarts: 0 };
+    const draw = () => PANELS.forEach(p => {
+      const dx = (X1 - X0) / (TITLE_POINTS - 1);
+      p.line.setAttribute('points', p.data.map((v, i) => `${(X0 + i * dx).toFixed(1)},${(p.y + PH - Math.max(0, Math.min(1, v)) * PH).toFixed(1)}`).join(' '));
+    });
+    const step = () => {
+      t += TITLE_STEP;
+      const s = titleSignals(t, r);
+      PANELS.forEach(p => { p.data.push(s[p.k]); if (p.data.length > TITLE_POINTS) p.data.shift(); });
+      if (s.alert !== st.alert) { st.alert = s.alert; badge.setAttribute('opacity', s.alert ? 1 : 0); }
+      const c = t % TITLE_CYCLE;
+      if (c >= TITLE_RESTART && c - TITLE_STEP < TITLE_RESTART) {
+        st.restarts++;
+        bot.setAttribute('opacity', 1);
+        clock.after(3, () => bot.setAttribute('opacity', 0));
+      }
+      if (st.alert) badge.setAttribute('opacity', 0.65 + 0.35 * Math.abs(Math.sin(t * 4)));
+    };
+    for (let i = 0; i < TITLE_POINTS; i++) step(); // arranca con el panel lleno
+    draw();
+    clock.every(TITLE_STEP, () => { step(); draw(); });
+    return {
+      start: () => clock.start(), stop: () => clock.stop(),
+      ff: sec => { ffClock(clock, sec); }, state: () => ({ t, alert: st.alert, restarts: st.restarts })
+    };
   };
 
   /* ---------- helpers de la tienda (ShopSim) ---------- */

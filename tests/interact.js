@@ -50,6 +50,20 @@ test('base: carga sin errores de consola', async (page, errors) => {
   check(errors.length === 0, `errores: ${errors.join(' | ')}`);
 });
 
+test('portada: el panel cuenta el incidente (alerta y reinicio) en loop', async page => {
+  await open(page, 0);
+  await page.waitForFunction(() => window.__sec(0)._scene, { timeout: 4000 });
+  const r = await page.evaluate(() => {
+    const sc = window.__sec(0)._scene, out = [];
+    for (let i = 0; i < 90; i++) { sc.ff(1); out.push(sc.state()); }
+    return { states: out, lines: window.__sec(0).querySelectorAll('svg.bg polyline').length };
+  });
+  check(r.lines === 3, `paneles: ${r.lines}`);
+  const alerts = r.states.filter(s => s.alert).length;
+  check(alerts > 10 && alerts < 45, `segundos con alerta: ${alerts}`);
+  check(r.states[r.states.length - 1].restarts >= 2, `reinicios: ${r.states[r.states.length - 1].restarts}`);
+});
+
 test('notas: todas las slides tienen pregunta', async page => {
   await open(page, 0);
   const r = await page.evaluate(() => [...document.querySelectorAll('.reveal .slides > section')]
