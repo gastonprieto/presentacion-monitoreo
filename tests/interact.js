@@ -111,7 +111,7 @@ test('outro: link al repo y preset', async page => {
   check(r.text.includes('load-balancer'), 'el outro no menciona el preset load-balancer');
   check(r.qr, 'el outro no tiene el QR');
   check(r.text.includes('laboratorio con Docker'), 'el outro no menciona el laboratorio con Docker');
-  check(r.links.some(h => h.includes('architecture-playground')), 'el outro no linkea al playground');
+  check(r.links.some(h => h.includes('nodarium.shichi.app')), 'el outro no linkea al playground');
 });
 
 /* ---------- ObsKit: métricas y alertas ---------- */
